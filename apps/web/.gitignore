@@ -21,3 +21,9 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# SQLite lives on a Fly volume in production and in a scratch file locally.
+local.db
+test.db
+*.db-shm
+*.db-wal

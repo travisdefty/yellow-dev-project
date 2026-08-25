@@ -1,25 +1,20 @@
 import { fail, redirect } from '@sveltejs/kit';
-import { detailsSchema, ageOn, riskGroupFor, todayInJohannesburg } from '@yellow/domain';
-import { nextStepAfter, readDraft, writeDraft } from '$lib/server/draft';
-import { fieldErrors } from '$lib/field-errors';
+import { nextStepAfter, writeDraft } from '$lib/server/draft';
 import type { Actions, PageServerLoad } from './$types';
 
-// The first step in the wizard, so there is no completeness guard here — everyone lands here with
-// an empty or partial draft and that is fine.
+// The first step, so there is no completeness guard — everyone lands here with an empty or partial
+// application and that is fine.
 export const load: PageServerLoad = ({ url }) => ({
 	// The prerendered start page posts the applicant's name here as a plain `?name=` query param via
-	// a GET form, so the field arrives pre-filled without the start page needing any server code of
-	// its own. Only used as a fallback when the draft doesn't already have a firstName.
+	// a GET form, so the field arrives pre-filled without that page needing any server code of its
+	// own. Only used as a fallback when the record doesn't already have a firstName.
 	seededFirstName: url.searchParams.get('name')?.trim() || ''
 });
 
-// Both failure paths below return through here, so the action has one failure shape rather than a
-// union of two literal ones — which is what lets the page index `form.errors` by field name.
-const invalid = (errors: Record<string, string>) => fail(400, { errors });
-
 export const actions = {
-	default: async ({ request, cookies, url }) => {
-		const draft = readDraft(cookies);
+	default: async (event) => {
+		const { request, locals, url } = event;
+		const draft = locals.draft!;
 		const form = await request.formData();
 
 		// The form sends day/month/year as three separate inputs so it degrades cleanly without JS
@@ -31,56 +26,30 @@ export const actions = {
 		const dobYear = String(form.get('dobYear') ?? '');
 		const composedDob = `${dobYear}-${dobMonth}-${dobDay}`;
 
+		// Identity lock, the form's half: once identity has been accepted, the inputs are readonly and
+		// this sends the stored values back rather than whatever arrived in the body. The API refuses
+		// a *changed* ID or date of birth outright, so a client that shouldn't be sending these gets a
+		// 400 rather than a silent discard — but the honest form never triggers it.
 		const locked = Boolean(draft.identityAcceptedAt);
 
-		// Identity lock: once identity has been accepted, idNumber and dob are no longer trusted from
-		// the client at all — not validated-then-rejected, simply ignored, and the values already
-		// sitting in the draft are re-validated instead. A client that shouldn't be sending these
-		// fields gets no signal about what it sent; it just never affects the outcome.
-		const candidate = {
-			firstName: String(form.get('firstName') ?? ''),
-			lastName: String(form.get('lastName') ?? ''),
-			mobile: String(form.get('mobile') ?? ''),
-			idNumber: locked ? (draft.idNumber ?? '') : String(form.get('idNumber') ?? ''),
-			dob: locked ? (draft.dob ?? '') : composedDob
-		};
-
-		const parsed = detailsSchema.safeParse(candidate);
-		if (!parsed.success) return invalid(fieldErrors(parsed.error));
-
-		let updated;
-		if (locked) {
-			updated = writeDraft(cookies, {
-				firstName: parsed.data.firstName,
-				lastName: parsed.data.lastName,
-				mobile: parsed.data.mobile
-			});
-		} else {
-			// The risk group is derived from age, server-side, once — right here, at the moment identity
-			// is accepted — and never recomputed on a later visit to this step. That keeps pricing stable
-			// for the rest of the flow even if the applicant's birthday rolls over while they finish
-			// applying. riskGroupFor cannot return null here: the schema's superRefine already rejected
-			// any dob outside the 18-65 band, so this is just satisfying the type without a non-null
-			// assertion.
-			const age = ageOn(parsed.data.dob, todayInJohannesburg());
-			const riskGroup = riskGroupFor(age);
-			if (!riskGroup) {
-				return invalid({ dob: 'Applicants must be between 18 and 65 years old.' });
+		const result = await writeDraft(event, {
+			step: 'details',
+			data: {
+				firstName: String(form.get('firstName') ?? ''),
+				lastName: String(form.get('lastName') ?? ''),
+				mobile: String(form.get('mobile') ?? ''),
+				idNumber: locked ? (draft.idNumber ?? '') : String(form.get('idNumber') ?? ''),
+				dob: locked ? (draft.dob ?? '') : composedDob
 			}
+		});
 
-			updated = writeDraft(cookies, {
-				firstName: parsed.data.firstName,
-				lastName: parsed.data.lastName,
-				mobile: parsed.data.mobile,
-				idNumber: parsed.data.idNumber,
-				dob: parsed.data.dob,
-				identityAcceptedAt: new Date().toISOString(),
-				riskGroup
-			});
-		}
+		// Validation lives in one place now — the schema the API parses with is the schema the browser
+		// parses with — so this forwards the refusal rather than reproducing it. `failure` is already
+		// shaped the way the page's `FieldError` slots expect.
+		if (!result.ok) return fail(result.status, result.failure);
 
-		// Names and a mobile number have no downstream effect — nothing later in the flow is derived
-		// from them — so an edit that only touches these is always safe to return straight to review.
-		redirect(303, nextStepAfter(updated, url, '/apply/income'));
+		// Names and a mobile number have no downstream effect — nothing later is derived from them —
+		// so an edit that only touches these is always safe to return straight to review.
+		redirect(303, nextStepAfter(result.draft, url, '/apply/income'));
 	}
 } satisfies Actions;

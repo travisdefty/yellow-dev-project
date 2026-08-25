@@ -87,3 +87,28 @@ export const submitSchema = z.strictObject({
 });
 
 export type SubmitInput = z.infer<typeof submitSchema>;
+
+/**
+ * The `PATCH /applications/:id` body: one step's worth of answers, and nothing else.
+ *
+ * Strict at both levels, which is the point. The outer `strictObject` is what turns a posted
+ * `riskGroup`, `depositBps` or `dailyCents` into a 400 rather than a silently ignored field — the
+ * client names which phone it wants and what it earns, and never anything carrying a price. The
+ * inner schemas are the same four the browser validates against, so the rule the applicant sees
+ * and the rule the server enforces are one object, not two that agree today.
+ *
+ * Nested under `data` rather than flattened with a discriminator field because `detailsSchema`
+ * carries a `superRefine` and is therefore a ZodEffects, which cannot be `.extend()`ed.
+ *
+ * It lives in the domain package rather than in the web app for the same reason the other four do:
+ * this is the API's contract, and the API is meant to be portable to Fastify. Keeping it here also
+ * keeps zod a dependency of exactly one package.
+ */
+export const patchSchema = z.discriminatedUnion('step', [
+	z.strictObject({ step: z.literal('details'), data: detailsSchema }),
+	z.strictObject({ step: z.literal('income'), data: incomeSchema }),
+	z.strictObject({ step: z.literal('phone'), data: phoneSelectionSchema }),
+	z.strictObject({ step: z.literal('submit'), data: submitSchema })
+]);
+
+export type PatchBody = z.infer<typeof patchSchema>;

@@ -1,5 +1,5 @@
 import { redirect } from '@sveltejs/kit';
-import { firstIncompleteStep, readDraft, resetApplication } from '$lib/server/draft';
+import { firstIncompleteStep, resetApplication } from '$lib/server/draft';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -18,8 +18,8 @@ import type { Actions, PageServerLoad } from './$types';
 const nextWithName = (name: string) =>
 	`/apply/details${name ? `?name=${encodeURIComponent(name)}` : ''}`;
 
-export const load: PageServerLoad = ({ locals, cookies, url }) => {
-	const draft = locals.draft ?? readDraft(cookies);
+export const load: PageServerLoad = ({ locals, url }) => {
+	const draft = locals.draft!;
 	const name = url.searchParams.get('name')?.trim() ?? '';
 
 	// Nothing to resume: this is an ordinary start, so don't make them read a question about it.

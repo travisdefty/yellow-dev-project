@@ -13,6 +13,19 @@ primary_region = 'jnb'
   NODE_ENV = 'production'
   PROTOCOL_HEADER = 'x-forwarded-proto'
   HOST_HEADER = 'x-forwarded-host'
+  # SQLite on the mounted volume. Everything outside /data is part of the image and is replaced on
+  # every deploy, so this is the one path where an application can survive one.
+  DB_PATH = '/data/yellow.db'
+
+# Create once, before the first deploy that needs it:
+#   fly volumes create yellow_data --region jnb --size 1
+#
+# A volume cannot be shared between machines, so this app is deliberately a single machine. That is
+# the trade-off SQLite asks for and it is a fair one here: one process, one file, no connection
+# string, nothing to provision. Scaling past one machine means moving to Postgres.
+[[mounts]]
+  source = 'yellow_data'
+  destination = '/data'
 
 [http_service]
   internal_port = 3000

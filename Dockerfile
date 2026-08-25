@@ -24,5 +24,8 @@ ENV PORT=3000
 COPY --from=build /app/prod/node_modules ./node_modules
 COPY --from=build /app/apps/web/build ./build
 COPY --from=build /app/apps/web/server.js ./server.js
+# The generated migrations. The app runs them itself at boot, so leaving these out does not fail
+# the build -- it fails the first request, in production, with an empty database.
+COPY --from=build /app/apps/web/drizzle ./drizzle
 EXPOSE 3000
 CMD ["node", "server.js"]

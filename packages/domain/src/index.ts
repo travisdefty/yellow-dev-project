@@ -20,6 +20,13 @@ export {
 	detailsSchema,
 	incomeSchema,
 	phoneSelectionSchema,
-	submitSchema
+	submitSchema,
+	patchSchema
 } from './schemas.ts';
-export type { DetailsInput, IncomeInput, PhoneSelectionInput, SubmitInput } from './schemas.ts';
+export type {
+	DetailsInput,
+	IncomeInput,
+	PhoneSelectionInput,
+	SubmitInput,
+	PatchBody
+} from './schemas.ts';

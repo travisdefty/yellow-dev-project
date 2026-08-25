@@ -1,13 +1,31 @@
-import { readDraft } from '$lib/server/draft';
 import type { LayoutServerLoad } from './$types';
 
-// This is what makes refresh work with no client state at all: every step's inputs come back
-// server-rendered with their values already sitting in the HTML, because the draft is read from
-// the cookie on every request rather than reconstructed in the browser.
-//
-// `locals.draft` is typed optional because it is genuinely absent outside `/apply`. Under this
-// layout the hook has always populated it, and the fallback both proves that to the type system
-// and keeps the whole wizard from having to optional-chain a value that is never missing.
-export const load: LayoutServerLoad = ({ locals, cookies }) => ({
-	draft: locals.draft ?? readDraft(cookies)
-});
+/**
+ * What the wizard's inputs need in order to come back filled in — and nothing else.
+ *
+ * This is what makes refresh work with no client state at all: every step's values are already in
+ * the server-rendered HTML, read from the record on each request rather than restored in the
+ * browser.
+ *
+ * Listed field by field rather than handed the whole application, because this payload is
+ * serialised to the client. The record also carries `riskGroup`, the stored quote and the
+ * application id; none of them belong in a page's data just because they happened to be on the
+ * same row. `riskGroup` in particular is a server-derived fact the client has no business seeing.
+ *
+ * `locals.draft` is typed optional because it is genuinely absent outside `/apply`. Under this
+ * layout the hook has always populated it.
+ */
+export const load: LayoutServerLoad = ({ locals }) => {
+	const draft = locals.draft;
+	return {
+		draft: {
+			firstName: draft?.firstName,
+			lastName: draft?.lastName,
+			mobile: draft?.mobile,
+			idNumber: draft?.idNumber,
+			dob: draft?.dob,
+			identityAcceptedAt: draft?.identityAcceptedAt,
+			monthlyIncomeCents: draft?.monthlyIncomeCents
+		}
+	};
+};

@@ -1,105 +1,140 @@
 /**
- * The one module that knows where wizard state lives. Today that is two cookies; in phase 3 it is
- * an `applications` row reached over HTTP. Callers only ever see `readDraft` / `writeDraft` /
- * `clearDraft` / `firstIncompleteStep`, so that migration is a body swap in this file and nothing
- * else in the app changes: `readDraft` becomes `GET /applications/:id` keyed on the id already
- * sitting in `yl_app`, `writeDraft` becomes the `PATCH`, and `yl_draft` is deleted outright. That
- * is the whole reason this indirection exists rather than reading cookies at each call site.
+ * The one module that knows where wizard state lives.
+ *
+ * It used to be two cookies. It is now an `applications` row reached over the API, and the fact
+ * that this file is the only thing that changed is the point of it existing: every route reaches
+ * state through `readDraft` / `writeDraft` / `resetApplication`, so none of them had to learn that
+ * the storage moved. The guards below — `requireStep`, `requireRiskGroup`, `nextStepAfter` — are
+ * pure functions over an application and did not move at all.
+ *
+ * `yl_draft` is gone. It carried the applicant's ID number and date of birth in a cookie, which
+ * was a phase-2 expedient and never a good idea; only the opaque `yl_app` id remains, and the
+ * personal data now lives on one row on the server.
+ *
+ * Reads and writes go through `event.fetch` rather than by calling the handlers directly. That is
+ * deliberate: it exercises the same HTTP boundary an external client would, so the endpoints
+ * cannot quietly diverge from what the wizard needs. It costs nothing — SvelteKit resolves a
+ * same-origin `+server.ts` request straight to the handler with no network round trip — and `/api`
+ * is outside `/apply`, so this never re-enters the hook that called it.
  */
-import { redirect, type Cookies } from '@sveltejs/kit';
+import { redirect, type Cookies, type RequestEvent } from '@sveltejs/kit';
 import { dev } from '$app/environment';
-import type { RiskGroup } from '@yellow/domain';
+import type { PatchBody, RiskGroup } from '@yellow/domain';
+import type { ActionFailure } from '$lib/field-errors';
+import type { Application } from '$lib/server/api/applications';
+import { STEP_ORDER, nextRequiredStep, type Step } from '$lib/server/api/steps';
 
 const APP_COOKIE = 'yl_app';
-const DRAFT_COOKIE = 'yl_draft';
 const MAX_AGE = 60 * 60 * 24 * 7; // 7 days
 
-export type Draft = {
-	applicationId: string;
-	firstName?: string;
-	lastName?: string;
-	mobile?: string;
-	idNumber?: string;
-	dob?: string;
-	/** ISO. Set once details validate. This is the identity lock — see steps.ts / details step. */
-	identityAcceptedAt?: string;
-	/** Derived server-side from age. Never accepted from the client, never sent to it. */
-	riskGroup?: RiskGroup;
-	monthlyIncomeCents?: number;
-	phoneId?: number;
+/**
+ * The wizard's name for an application. Unchanged in shape from the cookie era, which is why the
+ * routes did not have to move — the DTO was built to match it.
+ */
+export type Draft = Application;
+
+// Opaque, carries nothing sensitive, and is the reference the applicant reads off the confirmation
+// page. Scoped to '/' so it survives a trip to the landing page and back.
+const cookieOpts = {
+	path: '/',
+	httpOnly: true,
+	sameSite: 'lax' as const,
+	secure: !dev,
+	maxAge: MAX_AGE
 };
 
-// yl_app is opaque and carries nothing sensitive, so it is scoped to '/' and rides along with
-// every request, asset fetches included, without anyone having to think about it. yl_draft carries
-// an SA ID number partway through the flow, so it is scoped to '/apply' — it has no business being
-// attached to `/_app/immutable/*` or any other request outside the wizard.
-function cookieOpts(path: string) {
-	return { path, httpOnly: true, sameSite: 'lax' as const, secure: !dev, maxAge: MAX_AGE };
-}
+type Event = Pick<RequestEvent, 'fetch' | 'cookies'>;
 
-function freshDraft(applicationId: string): Draft {
-	return { applicationId };
-}
+/**
+ * The application this browser is working on, starting one if it has none.
+ *
+ * A submitted application is deliberately not resumed. The row stays as the record it now is, and
+ * the applicant gets a fresh one — so a back-button return to the wizard after submitting starts
+ * a new application rather than resurrecting a finished one.
+ */
+export async function readDraft(event: Event): Promise<Draft> {
+	const applicationId = event.cookies.get(APP_COOKIE);
 
-export function readDraft(cookies: Cookies): Draft {
-	let applicationId = cookies.get(APP_COOKIE);
-	if (!applicationId) {
-		applicationId = crypto.randomUUID();
-		cookies.set(APP_COOKIE, applicationId, cookieOpts('/'));
+	if (applicationId) {
+		const response = await event.fetch(`/api/applications/${applicationId}`);
+		if (response.ok) {
+			const application = (await response.json()) as Draft;
+			if (application.status === 'draft') return application;
+		}
+		// A 404 means the cookie outlived its row — an expired demo database, or an id from another
+		// deployment. Falling through starts a new application rather than 500ing on every request
+		// until the applicant works out how to clear their cookies.
 	}
 
-	const raw = cookies.get(DRAFT_COOKIE);
-	if (!raw) return freshDraft(applicationId);
-
-	try {
-		const parsed = JSON.parse(raw) as Draft;
-		// Staleness check: yl_draft carries its own applicationId. If it doesn't match yl_app, this
-		// is a leftover from a finished or expired application (yl_app rotated, yl_draft didn't) —
-		// treat it as absent rather than resurrecting someone else's half-filled form.
-		if (parsed.applicationId !== applicationId) return freshDraft(applicationId);
-		return parsed;
-	} catch {
-		// Malformed JSON is a corrupt cookie, not a 500 — start clean.
-		return freshDraft(applicationId);
-	}
+	return startApplication(event);
 }
 
-export function writeDraft(cookies: Cookies, patch: Partial<Draft>): Draft {
-	const merged = { ...readDraft(cookies), ...patch };
-	cookies.set(DRAFT_COOKIE, JSON.stringify(merged), cookieOpts('/apply'));
-	return merged;
+async function startApplication(event: Event): Promise<Draft> {
+	const response = await event.fetch('/api/applications', { method: 'POST' });
+	if (!response.ok) throw new Error(`Could not start an application: ${response.status}`);
+
+	const application = (await response.json()) as Draft;
+	event.cookies.set(APP_COOKIE, application.applicationId, cookieOpts);
+	return application;
 }
 
-export function clearDraft(cookies: Cookies): void {
-	cookies.delete(DRAFT_COOKIE, { path: '/apply' });
+/** Success carries the updated application; failure carries exactly what a `fail()` wants. */
+export type WriteResult =
+	| { ok: true; draft: Draft }
+	| { ok: false; status: number; failure: ActionFailure };
+
+/**
+ * One step's worth of answers, written through the API.
+ *
+ * Returns a result rather than throwing because every caller is a form action, and a refusal here
+ * is not exceptional — it is the identity lock, or a phone that stopped being affordable, and it
+ * has to reach the applicant as a field error rather than a 500. `ApiError` bodies are already
+ * shaped like an action failure, so the refusal is forwarded rather than translated: the message
+ * the API gives an external client and the message under the input are the same string.
+ */
+export async function writeDraft(event: Event, body: PatchBody): Promise<WriteResult> {
+	const applicationId = event.cookies.get(APP_COOKIE);
+	if (!applicationId) return { ok: false, status: 400, failure: { message: 'No application in progress.' } };
+
+	const response = await event.fetch(`/api/applications/${applicationId}`, {
+		method: 'PATCH',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify(body)
+	});
+
+	const payload = await response.json();
+	if (!response.ok) return { ok: false, status: response.status, failure: payload as ActionFailure };
+	return { ok: true, draft: payload as Draft };
 }
 
 /**
- * Abandon the application outright: the draft *and* the id it was keyed by.
+ * Abandon the application outright.
  *
- * Distinct from `clearDraft`, which runs on a successful submit and deliberately keeps `yl_app` —
- * that id is the reference the applicant reads off the confirmation page. Starting over is the
- * opposite case: whatever was half-entered is being thrown away, so the next visit to `/apply`
- * should mint a new id rather than reuse one that already has a partial application against it.
+ * Only the cookie is dropped; the row is left where it is. An abandoned draft is a real thing that
+ * happened and there is no reason to destroy the evidence — and because the unique index on ID
+ * numbers only covers *submitted* rows, an abandoned one cannot lock anybody out of their own ID.
+ * The next visit to `/apply` starts a new application.
  */
 export function resetApplication(cookies: Cookies): void {
-	clearDraft(cookies);
 	cookies.delete(APP_COOKIE, { path: '/' });
 }
 
-/** The wizard in order. `firstIncompleteStep` returns one of these; `requireStep` compares them. */
-const STEP_ORDER = ['/apply/details', '/apply/income', '/apply/phone', '/apply/review'] as const;
+const STEP_PATHS: Record<Step, string> = {
+	details: '/apply/details',
+	income: '/apply/income',
+	phone: '/apply/phone',
+	submit: '/apply/review'
+};
 
 /**
- * Refuses a step the draft has not earned yet, and sends the applicant to the one they actually
- * owe. Both loads and actions call this.
+ * Refuses a step the application has not earned yet, and sends the applicant to the one they owe.
  *
- * The actions matter more than the loads. A load guard only stops someone *navigating* out of
- * order; an action is a URL like any other, and without this it will happily write income onto a
- * draft whose identity was never accepted — which then arrives at the catalogue with no risk band.
+ * The API enforces this on the write as well, and that is the enforcement that counts. This is the
+ * navigational half: it stops someone *landing* on a step out of order and being shown a form that
+ * cannot possibly succeed.
  */
 export function requireStep(draft: Draft, step: (typeof STEP_ORDER)[number]): void {
-	if (STEP_ORDER.indexOf(firstIncompleteStep(draft) as (typeof STEP_ORDER)[number]) < STEP_ORDER.indexOf(step)) {
+	if (STEP_ORDER.indexOf(nextRequiredStep(draft)) < STEP_ORDER.indexOf(step)) {
 		redirect(303, firstIncompleteStep(draft));
 	}
 }
@@ -108,8 +143,8 @@ export function requireStep(draft: Draft, step: (typeof STEP_ORDER)[number]): vo
  * The band identity was accepted at, or a redirect back to the step that sets it.
  *
  * Deliberately not `draft.riskGroup ?? 'B'`: defaulting would quietly price someone who never
- * passed the identity check, at a band nobody chose for them. A missing band is a broken flow, not
- * a value to invent.
+ * passed the identity check, at a band nobody chose for them. A missing band is a broken flow,
+ * not a value to invent.
  */
 export function requireRiskGroup(draft: Draft): RiskGroup {
 	if (!draft.riskGroup) redirect(303, firstIncompleteStep(draft));
@@ -126,8 +161,7 @@ export function requireRiskGroup(draft: Draft): RiskGroup {
  * It is honoured only while the application still adds up. An edit can invalidate a later step —
  * dropping income below what the chosen phone needs is the live case — and that step is then
  * genuinely incomplete, so `firstIncompleteStep` routes them to the work they now owe instead of
- * back to a review that no longer holds. That check is what keeps this from being a blind redirect
- * that returns someone to a summary of a phone they can no longer have.
+ * back to a review that no longer holds.
  */
 export function nextStepAfter(draft: Draft, url: URL, linearNext: string): string {
 	if (url.searchParams.get('return') !== 'review') return linearNext;
@@ -135,8 +169,5 @@ export function nextStepAfter(draft: Draft, url: URL, linearNext: string): strin
 }
 
 export function firstIncompleteStep(draft: Draft): string {
-	if (!draft.identityAcceptedAt) return '/apply/details';
-	if (draft.monthlyIncomeCents === undefined) return '/apply/income';
-	if (draft.phoneId === undefined) return '/apply/phone';
-	return '/apply/review';
+	return STEP_PATHS[nextRequiredStep(draft)];
 }
