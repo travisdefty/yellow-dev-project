@@ -33,10 +33,9 @@ pnpm check      # svelte-check
 
 Deployed on [Fly.io](https://fly.io) as `yellow-travisdefty`, one Machine in Johannesburg (`jnb`). Docker builds the workspace and runs `node build` on port 3000 (`@sveltejs/adapter-node`). TLS and HTTP terminate at Fly; the app reads `X-Forwarded-Proto` / `X-Forwarded-Host`.
 
-- Live: <https://yellow-travisdefty.fly.dev>
-- Intended hostname: `yellow.travisdefty.co.za`
+- Live: <https://app.yellow.travisdefty.co.za/>
+- Fly default: <https://yellow-travisdefty.fly.dev>
 
 ```sh
 fly deploy --ha=false
-fly certs add yellow.travisdefty.co.za   # then point DNS at the records Fly prints
 ```

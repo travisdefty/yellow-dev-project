@@ -78,7 +78,7 @@
 			aria-describedby="income-hint income-error"
 		/>
 		<p id="income-hint" class="mt-1.5 text-sm text-muted-foreground">
-			We only show phones you can comfortably repay.
+			We want to provide you with options that work for you.
 		</p>
 		<FieldError id="income-error" />
 	</div>
@@ -135,7 +135,7 @@
 			</div>
 		{/if}
 		<p id="proof-hint" class="mt-1.5 text-sm text-muted-foreground">
-			A payslip or a bank statement. A clear photo is fine.
+			A payslip or a bank statement. A clear photo is fine. From the last 3 months.
 		</p>
 	</div>
 
