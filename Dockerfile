@@ -5,6 +5,10 @@ RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 WORKDIR /app
 
 FROM base AS build
+# better-sqlite3 compiles against the image's Node, so the slim base needs a compiler. The
+# resulting .node is copied into the runtime image; python and g++ stay in this stage.
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
+  && rm -rf /var/lib/apt/lists/*
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/web/package.json apps/web/.npmrc ./apps/web/
 COPY packages/domain/package.json ./packages/domain/
