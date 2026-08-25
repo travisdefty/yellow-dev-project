@@ -1,0 +1,23 @@
+app = 'yellow-travisdefty'
+primary_region = 'jnb'
+
+[build]
+
+[env]
+  PORT = '3000'
+  NODE_ENV = 'production'
+  PROTOCOL_HEADER = 'x-forwarded-proto'
+  HOST_HEADER = 'x-forwarded-host'
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+[[vm]]
+  memory = '512mb'
+  cpu_kind = 'shared'
+  cpus = 1

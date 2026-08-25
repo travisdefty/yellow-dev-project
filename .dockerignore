@@ -1,0 +1,14 @@
+.git
+.github
+.cursor
+docs
+**/node_modules
+**/.svelte-kit
+**/build
+.pnpm-store
+.env
+.env.*
+!.env.example
+!.env.test
+*.log
+**/*.log
