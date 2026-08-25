@@ -9,7 +9,7 @@ primary_region = 'jnb'
   # origin it thinks it is serving. Deriving that from forwarded headers works until a header is
   # dropped somewhere in front of the app, and the failure mode is every submit returning 403 with
   # nothing in the logs. There is exactly one hostname here, so it is stated outright.
-  ORIGIN = 'https://yellow-travisdefty.fly.dev'
+  ORIGIN = 'https://app.yellow.travisdefty.co.za'
   NODE_ENV = 'production'
   PROTOCOL_HEADER = 'x-forwarded-proto'
   HOST_HEADER = 'x-forwarded-host'
