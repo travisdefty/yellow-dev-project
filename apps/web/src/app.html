@@ -3,7 +3,27 @@
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
-		<meta name="text-scale" content="scale" />
+		<meta
+			name="description"
+			content="Finance a phone with Yellow. Pay a small deposit today, then a fixed daily amount over 360 days. Apply in about five minutes and see the full cost before you commit."
+		/>
+		<meta name="robots" content="noindex, nofollow" />
+		<meta name="googlebot" content="noindex, nofollow" />
+		<meta name="theme-color" content="#fcd806" />
+		<link rel="icon" href="%sveltekit.assets%/favicon.svg" type="image/svg+xml" />
+		<link rel="apple-touch-icon" href="%sveltekit.assets%/apple-touch-icon.png" />
+		<link rel="manifest" href="%sveltekit.assets%/site.webmanifest" />
+		<!--
+			Only the 400 is preloaded. It renders every line of body copy above the fold; 500 and 600
+			are headings and labels that `font-display: swap` can fill in without blocking paint.
+		-->
+		<link
+			rel="preload"
+			as="font"
+			type="font/woff2"
+			href="%sveltekit.assets%/fonts/poppins-400-latin.woff2"
+			crossorigin
+		/>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

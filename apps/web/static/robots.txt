@@ -1,3 +1,3 @@
-# allow crawling everything by default
+# Prototype / take-home build. Do not index.
 User-agent: *
-Disallow:
+Disallow: /
