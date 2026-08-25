@@ -6,6 +6,10 @@
  *
  * `compression` skips any response that already carries a Content-Encoding, so the static assets
  * the handler serves brotli'd are passed through untouched rather than compressed twice.
+ *
+ * Running this file directly to check a production build needs ORIGIN set to match the address you
+ * browse to — `ORIGIN=http://localhost:3000 node server.js` — or every form action answers 403.
+ * Fly sets it in `fly.toml`.
  */
 import { handler } from './build/handler.js';
 import compression from 'compression';

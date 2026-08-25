@@ -1,0 +1,16 @@
+{
+	"name": "@yellow/domain",
+	"private": true,
+	"version": "0.0.1",
+	"type": "module",
+	"//": "Source exports, no build step. Vite transpiles this for the web app and Fastify will do the same in phase 4. A package that has to be rebuilt before its consumer sees a change is a footgun.",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"dependencies": {
+		"zod": "^4.1.13"
+	},
+	"devDependencies": {
+		"typescript": "^6.0.3"
+	}
+}

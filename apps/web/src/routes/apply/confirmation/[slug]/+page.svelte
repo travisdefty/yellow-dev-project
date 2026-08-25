@@ -21,7 +21,7 @@
 	<Card class="px-4">
 		<p class="text-sm text-muted-foreground">Your reference</p>
 		<!-- Long enough to be read aloud over a phone line, so it does not wrap or shrink. -->
-		<p class="mt-1 font-mono text-lg tracking-wide">{data.id}</p>
+		<p class="mt-1 font-mono text-lg tracking-wide">{data.slug}</p>
 	</Card>
 
 	<Button size="pill" variant="outline" href="/">Back to the start</Button>

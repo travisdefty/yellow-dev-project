@@ -31,12 +31,33 @@
 		<li>· Five minutes of your time</li>
 	</ul>
 
-	<form class="flex flex-col gap-4" data-sveltekit-preload-data="tap">
+	<!--
+		A real GET form, not an action: `/` is prerendered (see +page.ts) and must stay that way, and
+		a GET form needs no server code at all — the browser builds `/apply/start?name=...` on its own.
+
+		It points at `/apply/start` rather than straight at the first step because this page cannot
+		know whether the browser is already mid-application — it is prerendered, so it has no server
+		code and never sees a cookie. `/apply/start` forwards to the first step when there is nothing
+		to resume, and asks first when there is. Without it, typing a new name here and pressing the
+		button silently continued the previous application with only the name swapped.
+	-->
+	<form
+		method="GET"
+		action="/apply/start"
+		class="flex flex-col gap-4"
+		data-sveltekit-preload-data="tap"
+	>
 		<div>
 			<Label for="firstName" class="mb-1.5">What should we call you?</Label>
-			<Input id="firstName" bind:value={firstName} autocomplete="given-name" placeholder="First name" />
+			<Input
+				id="firstName"
+				name="name"
+				bind:value={firstName}
+				autocomplete="given-name"
+				placeholder="First name"
+			/>
 		</div>
-		<Button size="pill" href="/apply/details">Get started</Button>
+		<Button type="submit" size="pill">Get started</Button>
 	</form>
 
 	<p class="text-xs text-muted-foreground">

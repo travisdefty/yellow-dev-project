@@ -14,5 +14,10 @@ export default defineConfig({
 
 			adapter: adapter()
 		})
-	]
+	],
+	ssr: {
+		// Source-only workspace package (exports .ts). Bundle it and zod so the Node adapter
+		// does not try to resolve them from node_modules at prerender or runtime.
+		noExternal: ['@yellow/domain', 'zod']
+	}
 });

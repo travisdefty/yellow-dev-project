@@ -18,7 +18,7 @@ Postgres. Fly.io.
 
 One route per step so refresh works.
 
-`/` start → `/apply/details` → `/apply/income` → `/apply/phone` → `/apply/review` → `/apply/:id/confirmation`
+`/` start → `/apply/details` → `/apply/income` → `/apply/phone` → `/apply/review` → `/apply/confirmation/:slug`
 
 Collection points only if time remains. Not a step.
 

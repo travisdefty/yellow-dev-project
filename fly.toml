@@ -5,6 +5,11 @@ primary_region = 'jnb'
 
 [env]
   PORT = '3000'
+  # Form actions are POSTs, and SvelteKit rejects a POST whose Origin header does not match the
+  # origin it thinks it is serving. Deriving that from forwarded headers works until a header is
+  # dropped somewhere in front of the app, and the failure mode is every submit returning 403 with
+  # nothing in the logs. There is exactly one hostname here, so it is stated outright.
+  ORIGIN = 'https://yellow-travisdefty.fly.dev'
   NODE_ENV = 'production'
   PROTOCOL_HEADER = 'x-forwarded-proto'
   HOST_HEADER = 'x-forwarded-host'

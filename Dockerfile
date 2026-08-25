@@ -7,8 +7,10 @@ WORKDIR /app
 FROM base AS build
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/web/package.json apps/web/.npmrc ./apps/web/
+COPY packages/domain/package.json ./packages/domain/
 RUN pnpm install --frozen-lockfile
 COPY apps/web ./apps/web
+COPY packages/domain ./packages/domain
 RUN pnpm --filter @yellow/web build
 # A self-contained production tree: the two runtime deps and nothing else (~900KB), rather than
 # the workspace's symlinked store, which would drag every build tool into the final image.

@@ -1,5 +1,6 @@
 <script lang="ts">
-	import type { PhoneItem } from '$lib/catalogue';
+	import { enhance } from '$app/forms';
+	import type { QuotedPhone } from '$lib/catalogue';
 	import { formatCents, formatCentsExact } from '$lib/format';
 	import DeviceSilhouette from '$lib/devices/DeviceSilhouette.svelte';
 	import { tintForBrand } from '$lib/devices/brand-tint';
@@ -7,11 +8,22 @@
 	import { Card } from '$lib/components/ui/card';
 	import { Separator } from '$lib/components/ui/separator';
 
-	type Props = { phone: PhoneItem };
-	let { phone }: Props = $props();
+	// No affordability props any more: the catalogue load filters unaffordable phones out entirely,
+	// so every card that renders is one the applicant can actually choose.
+	type Props = { phone: QuotedPhone; selected?: boolean };
+	let { phone, selected = false }: Props = $props();
 </script>
 
-<Card class="gap-4 rounded-lg px-4">
+<!--
+	`selected` is what a phone already chosen looks like when the applicant walks back through the
+	catalogue — after editing an earlier step, say. Marked rather than filtered out, so the choice is
+	visible in place and changing it is one tap.
+-->
+<Card class={['gap-4 rounded-lg px-4', selected && 'border-foreground ring-1 ring-foreground']}>
+	{#if selected}
+		<p class="text-xs font-semibold tracking-wide uppercase">Your current choice</p>
+	{/if}
+
 	<div class="flex items-start gap-4">
 		<DeviceSilhouette tint={tintForBrand(phone.brand)} class="h-16 w-10 shrink-0" />
 
@@ -32,19 +44,37 @@
 		</div>
 	</div>
 
-	<dl class="grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
-		<dt class="text-muted-foreground">Cash price</dt>
-		<dd class="text-right text-muted-foreground">{formatCents(phone.cashPriceCents)}</dd>
-		<dt class="text-muted-foreground">Deposit today</dt>
-		<dd class="text-right">{formatCents(phone.depositCents)}</dd>
+	<!--
+		The two figures that decide the purchase: what leaves their pocket today, and what the whole
+		thing costs by the end. Both carry the label's weight, because reading only the daily amount
+		and missing the deposit is how someone arrives at collection unable to pay.
+	-->
+	<dl class="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
+		<dt>Deposit today</dt>
+		<dd class="text-right font-semibold">{formatCents(phone.depositCents)}</dd>
+		<dt>Total to pay</dt>
+		<dd class="text-right font-semibold">{formatCents(phone.totalPayableCents)}</dd>
 	</dl>
 
 	<Separator />
 
-	<dl class="grid grid-cols-2 gap-x-3 text-sm">
-		<dt class="text-muted-foreground">Total repayable</dt>
-		<dd class="text-right font-medium">{formatCents(phone.loanAmountCents)}</dd>
-	</dl>
+	<!--
+		Cash price is reference, not a price on offer — nobody is buying this phone outright on this
+		screen. Demoted to a footnote so it stops competing with the two figures above it.
+	-->
+	<p class="text-xs text-muted-foreground">
+		Cash price {formatCents(phone.cashPriceCents)} if bought outright.
+	</p>
 
-	<Button size="pill" href="/apply/review" class="w-full">Select this phone</Button>
+	<!--
+		This form only submits the id; the server re-derives the price and re-checks affordability
+		from the stored draft. Hiding a device the applicant cannot afford is a courtesy, not the
+		rule — the action refuses a forged id regardless of what the catalogue chose to render.
+	-->
+	<form method="POST" use:enhance>
+		<input type="hidden" name="phoneId" value={phone.phoneId} />
+		<Button type="submit" size="pill" variant={selected ? 'outline' : 'default'} class="w-full">
+			{selected ? 'Keep this phone' : 'Select this phone'}
+		</Button>
+	</form>
 </Card>

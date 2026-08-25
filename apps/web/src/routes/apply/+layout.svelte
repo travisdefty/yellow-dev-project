@@ -16,3 +16,18 @@
 {/if}
 
 {@render children()}
+
+<!--
+	The way out. Without this the wizard is a trap: the only exits are the browser's back button,
+	which lands on a step still holding the previous application's data, and the logo, which leaves
+	the draft cookie exactly where it was. Rendered under the step rather than in the header so it
+	reads as an escape hatch rather than a fifth option competing with Continue — and only on the
+	numbered steps, since the confirmation has nothing left to abandon.
+-->
+{#if current}
+	<p class="mt-8 text-center text-sm text-muted-foreground">
+		<a href="/apply/restart" class="underline underline-offset-4 hover:text-foreground">
+			Start over
+		</a>
+	</p>
+{/if}

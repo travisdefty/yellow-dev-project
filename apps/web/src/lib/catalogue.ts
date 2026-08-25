@@ -4,7 +4,9 @@
  *
  * Every amount is an integer number of cents. No floats anywhere in a money path.
  */
-export type PhoneItem = {
+import type { Quote } from '@yellow/domain';
+
+export type Phone = {
 	phoneId: number;
 	sku: string;
 	brand: string;
@@ -13,15 +15,14 @@ export type PhoneItem = {
 	storageGb: number;
 	/** What the phone costs outright, with no finance. */
 	cashPriceCents: number;
-	/** Due at purchase. `depositCents + principalCents === cashPriceCents`. */
-	depositCents: number;
-	/** What is actually loaned. */
-	principalCents: number;
-	/** Principal plus interest — the total repayable over the term. */
-	loanAmountCents: number;
-	/** `loanAmountCents / LOAN_TERM_DAYS`. Hero price on the card. */
-	dailyCents: number;
 };
 
-/** Every loan is one year, repaid daily. Moves to `packages/domain` in phase 2. */
-export const LOAN_TERM_DAYS = 360;
+/**
+ * A `Phone` with its quote attached — deposit, principal, loan amount and daily price, computed
+ * by `quote()` against the applicant's risk band. This is what the card actually renders; a bare
+ * `Phone` is only the catalogue row before pricing has been applied.
+ */
+export type QuotedPhone = Phone & Quote;
+
+// Re-exported rather than declared here so there is exactly one definition of 360 in the repo.
+export { LOAN_TERM_DAYS } from '@yellow/domain';
