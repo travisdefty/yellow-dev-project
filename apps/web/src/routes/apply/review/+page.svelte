@@ -12,33 +12,20 @@
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
-	let consent = $state(false);
 	// With JavaScript on, `validatedSubmit` sets these directly — from its own client-side parse, or
 	// from what the action sent back. With JavaScript off there is no parse and no enhance callback:
 	// the action's `fail()` re-renders this page and its errors arrive on the `form` prop, which is
 	// then the only place they exist. Client errors win when both are present, so the two paths
 	// never disagree.
 	let clientErrors = $state<Record<string, string> | null>(null);
-	const errors = $derived(clientErrors ?? form?.errors ?? {});
-
-	// The client value is the bare boolean, not the schema's object shape, so a tiny adapter wraps
-	// it and rewrites the failure to the same wording the server uses, so an unticked box is caught
-	// before the network round trip with no visible difference from a server round trip.
-	const consentSchema = {
-		safeParse(value: unknown) {
-			const result = submitSchema.safeParse({ consent: value });
-			if (result.success) return result;
-			return {
-				success: false as const,
-				error: { issues: [{ path: ['consent'], message: 'Please agree before submitting.' }] }
-			};
-		}
-	};
+	let submitting = $state(false);
+	const errors = $derived<Record<string, string>>(clientErrors ?? form?.errors ?? {});
 
 	const submit = validatedSubmit(
-		consentSchema,
-		() => consent,
-		(e) => (clientErrors = e)
+		submitSchema,
+		() => ({}),
+		(e) => (clientErrors = e),
+		(pending) => (submitting = pending)
 	);
 </script>
 
@@ -59,6 +46,11 @@
 			{form.message}
 		</p>
 	{/if}
+
+	<Card class="px-4">
+		<p class="text-sm text-muted-foreground">Your reference</p>
+		<p class="mt-1 font-mono text-lg tracking-wide">{data.publicReference}</p>
+	</Card>
 
 	<!--
 		What they entered, played back before they commit to it. This is the last screen where a
@@ -85,6 +77,16 @@
 			<dt class="text-muted-foreground">Date of birth</dt>
 			<dd class="text-right">{formatDateIso(data.applicant.dob)}</dd>
 		</dl>
+		<FieldError message={errors.idNumber} />
+		{#if errors.idNumber}
+			<p class="text-sm text-muted-foreground">
+				Once your ID is accepted it cannot be changed here.
+				<a href="/apply/restart" class="underline underline-offset-4 hover:text-foreground">
+					Start a new application
+				</a>
+				if you need to use a different ID number.
+			</p>
+		{/if}
 	</Card>
 
 	<Card class="gap-3 px-4">
@@ -147,51 +149,26 @@
 						Deposit plus every payment
 					</span>
 				</span>
-				<span class="text-2xl font-semibold">{formatCents(data.phone.totalPayableCents)}</span>
+				<span class="text-2xl font-semibold">{formatCentsExact(data.phone.totalPayableCents)}</span>
 			</div>
 		</div>
 
 		<Separator />
 
 		<!--
-			Reference, not terms. The cash price in particular is what the phone would cost if bought
-			outright, which is not what is on offer here — kept for comparison, demoted so it cannot be
-			mistaken for an amount owed.
+			Reference, not terms. The cash price is what the phone would cost if bought outright, which
+			is not what is on offer here — kept for comparison, demoted so it cannot be mistaken for an
+			amount owed.
 		-->
-		<dl class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-muted-foreground">
-			<dt>Cash price if bought outright</dt>
-			<dd class="text-right">{formatCents(data.phone.cashPriceCents)}</dd>
-			<dt>Amount financed</dt>
-			<dd class="text-right">{formatCents(data.phone.principalCents)}</dd>
-			<dt>Interest</dt>
-			<dd class="text-right">{formatCents(data.interestCents)}</dd>
-		</dl>
+		<p class="text-xs text-muted-foreground">
+			Cash price {formatCents(data.phone.cashPriceCents)} if bought outright.
+		</p>
 	</Card>
-
-	<!--
-		A placeholder, and marked as one. The real wording of a POPIA consent is a legal job, not a
-		developer's guess — the checkbox and the fact that it is required are the parts that matter
-		to the shape of the application.
-	-->
-	<div>
-		<label class="flex items-start gap-3 text-sm">
-			<input
-				type="checkbox"
-				name="consent"
-				bind:checked={consent}
-				aria-describedby="consent-error"
-				class="mt-0.5 size-5 shrink-0 rounded-sm accent-accent"
-			/>
-			<span class="text-muted-foreground">
-				I agree that Yellow may process my personal information to assess this application.
-				<span class="italic">(Placeholder wording.)</span>
-			</span>
-		</label>
-		<FieldError id="consent-error" message={errors.consent} />
-	</div>
 
 	<div class="flex gap-3">
 		<Button size="pill" variant="outline" href="/apply/phone" class="flex-1">Back</Button>
-		<Button type="submit" size="pill" class="flex-1">Submit</Button>
+		<Button type="submit" size="pill" disabled={submitting} class="flex-1">
+			{submitting ? 'Submitting…' : 'Submit'}
+		</Button>
 	</div>
 </form>

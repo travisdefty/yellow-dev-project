@@ -6,36 +6,19 @@
 	import FileUpIcon from '@lucide/svelte/icons/file-up';
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
 	import XIcon from '@lucide/svelte/icons/x';
-	import { untrack } from 'svelte';
+	import { untrack, onDestroy } from 'svelte';
 	import { enhance } from '$app/forms';
-	import { validatedSubmit } from '$lib/forms';
+	import type { SubmitFunction } from '@sveltejs/kit';
+	import { prepareFileUpload, isAcceptedProof, PROOF_ACCEPT, PROOF_TYPE_ERROR } from '$lib/upload';
+	import { toast } from 'svelte-sonner';
 	import { incomeSchema, parseRandsToCents } from '@yellow/domain';
-	import type { Parser } from '$lib/field-errors';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	const INCOME_ERROR = 'Enter an amount, for example R 12 500.';
+	const PROOF_REQUIRED = 'Upload a payslip or bank statement.';
 
-	// The form's field is called 'income' and speaks plain rands as typed; the schema's field is
-	// called 'monthlyIncomeCents' and speaks integer cents. This adapter bridges the two so the same
-	// wording and the same acceptance rule apply whether or not JS ran, without the schema itself
-	// needing to know about the form's naming.
-	const incomeForm: Parser<{ income: string }> = {
-		safeParse: (value) => {
-			const income = (value as { income: string }).income;
-			const cents = parseRandsToCents(income);
-			const failed = cents === null || !incomeSchema.safeParse({ monthlyIncomeCents: cents }).success;
-			return failed
-				? { success: false, error: { issues: [{ path: ['income'], message: INCOME_ERROR }] } }
-				: { success: true, data: { income } };
-		}
-	};
-
-	// Seeded from the draft, rendered as a plain rand amount with no currency symbol so it round-
-	// trips cleanly back through parseRandsToCents on submit.
-	// Read once, deliberately: a failed submit re-runs the load, and re-seeding there would
-	// overwrite the amount the applicant had just typed.
 	let income = $state(
 		untrack(() =>
 			data.draft.monthlyIncomeCents !== undefined
@@ -43,24 +26,78 @@
 				: ''
 		)
 	);
+	const savedProofName = untrack(() => data.draft.proofFilename ?? '');
+	const savedIsImage = untrack(() => Boolean(data.draft.proofIsImage));
+
+	let proofInput: HTMLInputElement | undefined;
 	let proofFile = $state<File | null>(null);
+	let proofThumb = $state<File | null>(null);
 	let previewUrl = $state<string | null>(null);
 	let proofKey = $state(0);
 	let draggingOver = $state(false);
+	let preparing = $state(false);
+	let submitting = $state(false);
+	let savedThumbFailed = $state(false);
+	let prepareGen = 0;
 
-	function isAcceptedProof(file: File) {
-		return file.type.startsWith('image/') || file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
-	}
+	let clientErrors = $state<Record<string, string> | null>(null);
+	const errors = $derived<Record<string, string>>(clientErrors ?? form?.errors ?? {});
 
-	function setProof(file: File | null) {
+	const hasProof = $derived(Boolean(proofFile || savedProofName));
+	const complete = $derived(Boolean(income && hasProof));
+
+	onDestroy(() => {
+		if (previewUrl) URL.revokeObjectURL(previewUrl);
+	});
+
+	function setProof(file: File | null, thumb: File | null = null) {
 		if (previewUrl) URL.revokeObjectURL(previewUrl);
 		proofFile = file;
-		previewUrl = file?.type.startsWith('image/') ? URL.createObjectURL(file) : null;
+		proofThumb = thumb;
+		previewUrl = thumb ? URL.createObjectURL(thumb) : null;
+	}
+
+	function assignToInput(file: File) {
+		if (!proofInput) return;
+		const transfer = new DataTransfer();
+		transfer.items.add(file);
+		proofInput.files = transfer.files;
+	}
+
+	function resetInput() {
+		proofKey += 1;
+	}
+
+	async function acceptProof(file: File, fromInput = false) {
+		if (!isAcceptedProof(file)) {
+			clientErrors = { proof: PROOF_TYPE_ERROR };
+			if (fromInput) resetInput();
+			return;
+		}
+
+		clientErrors = null;
+		const gen = ++prepareGen;
+		preparing = true;
+		try {
+			const prepared = await prepareFileUpload(file);
+			if (gen !== prepareGen) return;
+			assignToInput(prepared.file);
+			setProof(prepared.file, prepared.thumb);
+		} catch {
+			if (gen !== prepareGen) return;
+			toast.error('Could not prepare that file. Try another photo or PDF under 5 MB.');
+			setProof(null);
+			resetInput();
+		} finally {
+			if (gen === prepareGen) preparing = false;
+		}
 	}
 
 	function onProofInput(event: Event) {
 		const input = event.currentTarget as HTMLInputElement;
-		setProof(input.files?.[0] ?? null);
+		const file = input.files?.[0];
+		if (!file) return;
+		void acceptProof(file, true);
 	}
 
 	function onDragEnter(event: DragEvent) {
@@ -83,14 +120,15 @@
 	function onDrop(event: DragEvent) {
 		event.preventDefault();
 		draggingOver = false;
-		const files = event.dataTransfer?.files;
-		const file = files?.[0] && isAcceptedProof(files[0]) ? files[0] : null;
-		if (file) setProof(file);
+		const file = event.dataTransfer?.files?.[0];
+		if (file) void acceptProof(file);
 	}
 
 	function clearProof() {
+		prepareGen += 1;
+		preparing = false;
 		setProof(null);
-		proofKey += 1;
+		resetInput();
 	}
 
 	function proofSize(file: File) {
@@ -99,34 +137,50 @@
 		return `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
 	}
 
-	// With JavaScript on, `validatedSubmit` sets these directly — from its own client-side parse, or
-	// from what the action sent back. With JavaScript off there is no parse and no enhance callback:
-	// the action's `fail()` re-renders this page and its errors arrive on the `form` prop, which is
-	// then the only place they exist. Client errors win when both are present, so the two paths
-	// never disagree.
-	let clientErrors = $state<Record<string, string> | null>(null);
-	const errors = $derived(clientErrors ?? form?.errors ?? {});
+	const submit: SubmitFunction = ({ formData, cancel }) => {
+		const incomeValue = String(formData.get('income') ?? '');
+		const cents = parseRandsToCents(incomeValue);
+		if (cents === null || !incomeSchema.safeParse({ monthlyIncomeCents: cents }).success) {
+			clientErrors = { income: INCOME_ERROR };
+			cancel();
+			return;
+		}
 
-	// Completeness, not validity — same reasoning as the details step: a non-empty value is enough
-	// to enable Continue, and pressing it is what surfaces a value that doesn't actually parse.
-	const complete = $derived(Boolean(income));
+		const proof = formData.get('proof');
+		const hasNewProof = proof instanceof File && proof.size > 0;
+		if (!hasNewProof && !savedProofName) {
+			clientErrors = { proof: PROOF_REQUIRED };
+			cancel();
+			return;
+		}
 
-	const submit = validatedSubmit(incomeForm, () => ({ income }), (e) => (clientErrors = e));
+		clientErrors = {};
+		if (proofThumb) formData.set('proofThumb', proofThumb);
+
+		submitting = true;
+		return async ({ result, update }) => {
+			try {
+				if (result.type === 'failure') {
+					const failure = result.data as
+						| { errors?: Record<string, string>; message?: string }
+						| undefined;
+					if (failure?.errors) clientErrors = failure.errors;
+					if (failure?.message) toast.error(failure.message);
+					return;
+				}
+				await update({ reset: false });
+			} finally {
+				submitting = false;
+			}
+		};
+	};
 </script>
 
 <svelte:head><title>Your income | Yellow</title></svelte:head>
 
-<form method="POST" use:enhance={submit} class="flex flex-col gap-5">
+<form method="POST" enctype="multipart/form-data" use:enhance={submit} class="flex flex-col gap-5">
 	<div>
 		<Label for="income" class="mb-1.5">What do you earn each month, before deductions?</Label>
-		<!--
-			The R is a fixed prefix inside the field, not part of the placeholder. A placeholder
-			disappears the moment you type, so the currency vanished exactly when the number appeared
-			and there was nothing left saying what the digits meant. The input's own value stays a bare
-			amount, so it still round-trips through `parseRandsToCents` untouched — the symbol is
-			decoration and never reaches the form data. `aria-hidden` keeps a screen reader from
-			reading a stray letter before the field it labels.
-		-->
 		<div class="relative">
 			<span
 				class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-base text-muted-foreground"
@@ -150,68 +204,111 @@
 	</div>
 
 	<div>
-		<Label for="proof" class="mb-1.5">Proof of income</Label>
-		<!--
-			Deliberately no `name` here. Upload is a later phase; giving a file input a name in a
-			urlencoded form would post only the filename with the bytes silently dropped, which is worse
-			than not submitting it at all. Leave this unnamed until the upload phase lands.
-		-->
+		<Label for="proof" class="mb-1.5">Proof of income <span class="text-negative">*</span></Label>
 		{#key proofKey}
 			<input
 				id="proof"
 				class="peer sr-only"
 				type="file"
-				accept="image/*,application/pdf"
-				aria-describedby="proof-hint"
+				name="proof"
+				accept={PROOF_ACCEPT}
+				aria-describedby="proof-hint proof-error"
+				aria-invalid={Boolean(errors.proof) || undefined}
 				onchange={onProofInput}
+				{@attach (node: HTMLInputElement) => {
+					proofInput = node;
+					return () => {
+						if (proofInput === node) proofInput = undefined;
+					};
+				}}
 			/>
 		{/key}
-		{#if proofFile}
-			<div class="flex items-center gap-3 rounded-lg border border-input bg-card p-3">
-				{#if previewUrl}
-					<img src={previewUrl} alt="" class="size-14 rounded-md object-cover" />
-				{:else}
-					<div class="flex size-14 items-center justify-center rounded-md bg-muted">
-						<FileTextIcon class="size-6" aria-hidden="true" />
+		<div
+			role="presentation"
+			class="rounded-lg peer-focus-visible:ring-3 peer-focus-visible:ring-ring/50"
+			ondragenter={onDragEnter}
+			ondragover={onDragOver}
+			ondragleave={onDragLeave}
+			ondrop={onDrop}
+		>
+			{#if proofFile}
+				<div
+					class={[
+						'flex items-center gap-3 rounded-lg border bg-card p-3',
+						draggingOver ? 'border-foreground' : 'border-input',
+						errors.proof ? 'border-destructive' : ''
+					]}
+				>
+					{#if previewUrl}
+						<img src={previewUrl} alt="" class="size-14 shrink-0 rounded-md object-cover" />
+					{:else}
+						<div class="flex size-14 shrink-0 items-center justify-center rounded-md bg-muted">
+							<FileTextIcon class="size-6" aria-hidden="true" />
+						</div>
+					{/if}
+					<div class="min-w-0 flex-1">
+						<p class="truncate text-sm font-medium">{proofFile.name}</p>
+						<p class="text-xs text-muted-foreground">{proofSize(proofFile)}</p>
 					</div>
-				{/if}
-				<div class="min-w-0 flex-1">
-					<p class="truncate text-sm font-medium">{proofFile.name}</p>
-					<p class="text-xs text-muted-foreground">{proofSize(proofFile)}</p>
+					<Button variant="ghost" size="icon" onclick={clearProof} aria-label="Remove proof of income">
+						<XIcon />
+					</Button>
 				</div>
-				<Button variant="ghost" size="icon" onclick={clearProof} aria-label="Remove proof of income">
-					<XIcon />
-				</Button>
-			</div>
-		{:else}
-			<div
-				role="presentation"
-				class={[
-					'rounded-lg border border-dashed transition-colors',
-					draggingOver ? 'border-foreground bg-muted/40' : 'border-input bg-card'
-				]}
-				ondragenter={onDragEnter}
-				ondragover={onDragOver}
-				ondragleave={onDragLeave}
-				ondrop={onDrop}
-			>
+			{:else if savedProofName}
 				<label
 					for="proof"
-					class="flex min-h-28 cursor-pointer flex-col items-center justify-center gap-1.5 px-4 py-5 text-center hover:bg-muted/40 peer-focus-visible:ring-3 peer-focus-visible:ring-ring/50 [&_*]:pointer-events-none"
+					class={[
+						'flex cursor-pointer items-center gap-3 rounded-lg border bg-card p-3 hover:bg-muted/40',
+						draggingOver ? 'border-foreground' : 'border-input',
+						errors.proof ? 'border-destructive' : ''
+					]}
 				>
-					<FileUpIcon class="size-6" aria-hidden="true" />
-					<span class="text-sm font-medium">Choose a file</span>
-					<span class="text-xs text-muted-foreground">Payslip or bank statement</span>
+					{#if savedIsImage && !savedThumbFailed}
+						<img
+							src="/apply/income/proof"
+							alt=""
+							class="size-14 shrink-0 rounded-md object-cover"
+							onerror={() => (savedThumbFailed = true)}
+						/>
+					{:else}
+						<div class="flex size-14 shrink-0 items-center justify-center rounded-md bg-muted">
+							<FileTextIcon class="size-6" aria-hidden="true" />
+						</div>
+					{/if}
+					<div class="min-w-0 flex-1">
+						<p class="truncate text-sm font-medium">{savedProofName}</p>
+						<p class="text-xs text-muted-foreground">Already uploaded — choose a new file to replace it</p>
+					</div>
 				</label>
-			</div>
-		{/if}
+			{:else}
+				<div
+					class={[
+						'rounded-lg border border-dashed transition-colors',
+						draggingOver ? 'border-foreground bg-muted/40' : 'border-input bg-card',
+						errors.proof ? 'border-destructive' : ''
+					]}
+				>
+					<label
+						for="proof"
+						class="flex min-h-28 cursor-pointer flex-col items-center justify-center gap-1.5 px-4 py-5 text-center hover:bg-muted/40 [&_*]:pointer-events-none"
+					>
+						<FileUpIcon class="size-6" aria-hidden="true" />
+						<span class="text-sm font-medium">Choose a file</span>
+						<span class="text-xs text-muted-foreground">Payslip or bank statement</span>
+					</label>
+				</div>
+			{/if}
+		</div>
 		<p id="proof-hint" class="mt-1.5 text-sm text-muted-foreground">
-			A payslip or a bank statement. A clear photo is fine. From the last 3 months.
+			A payslip or a bank statement. Files are optimised before upload. From the last 3 months.
 		</p>
+		<FieldError id="proof-error" message={errors.proof} />
 	</div>
 
 	<div class="flex gap-3">
 		<Button size="pill" variant="outline" href="/apply/details" class="flex-1">Back</Button>
-		<Button size="pill" type="submit" disabled={!complete} class="flex-1">Continue</Button>
+		<Button size="pill" type="submit" disabled={!complete || preparing || submitting} class="flex-1">
+			{preparing ? 'Preparing…' : submitting ? 'Saving…' : 'Continue'}
+		</Button>
 	</div>
 </form>

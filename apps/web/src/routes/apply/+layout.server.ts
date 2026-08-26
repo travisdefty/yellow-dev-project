@@ -12,8 +12,8 @@ import type { LayoutServerLoad } from './$types';
  * application id; none of them belong in a page's data just because they happened to be on the
  * same row. `riskGroup` in particular is a server-derived fact the client has no business seeing.
  *
- * `locals.draft` is typed optional because it is genuinely absent outside `/apply`. Under this
- * layout the hook has always populated it.
+ * `locals.draft` is typed optional because it is genuinely absent outside the wizard — including
+ * on confirmation, which shares this layout but never starts or resumes an application.
  */
 export const load: LayoutServerLoad = ({ locals }) => {
 	const draft = locals.draft;
@@ -25,7 +25,10 @@ export const load: LayoutServerLoad = ({ locals }) => {
 			idNumber: draft?.idNumber,
 			dob: draft?.dob,
 			identityAcceptedAt: draft?.identityAcceptedAt,
-			monthlyIncomeCents: draft?.monthlyIncomeCents
+			consented: Boolean(draft?.consentAt),
+			monthlyIncomeCents: draft?.monthlyIncomeCents,
+			proofFilename: draft?.proofFilename,
+			proofIsImage: Boolean(draft?.proofMime?.startsWith('image/'))
 		}
 	};
 };

@@ -1,5 +1,5 @@
 /**
- * The three tables the specification names: `phones`, `phone_pricing`, `applications`.
+ * The three tables the specification names: `phones`, `risk_group_rates`, `applications`.
  *
  * SQLite rather than Postgres is a deliberate trade-off taken under a time budget — one app, one
  * machine, one file on a Fly volume, no second deploy target. The README states it outright. The
@@ -9,7 +9,7 @@
  * Every amount is an integer number of cents and every rate an integer number of basis points.
  * There is no float anywhere in this file, and there must never be one.
  */
-import { relations, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 /** The catalogue. One row per device; `cashPriceCents` is the only money field. */
@@ -24,32 +24,15 @@ export const phones = sqliteTable('phones', {
 });
 
 /**
- * One pricing row per phone per risk group — 12 phones x 3 groups = 36 rows.
- *
- * Phase 2 keyed rates by band alone (three rows total) and documented that as a divergence from
- * the specification's "each phone has one pricing row per group". Once the rates live in a table
- * that shortcut buys nothing, so this restores the specified shape. The seed still gives every
- * phone the same three rates, which means today's numbers are unchanged — but the schema can now
- * express a per-handset rate without a migration, which is the whole point of rates living on a
- * row instead of in code.
+ * Deposit and interest for a risk band. Three rows — one per group — applied to every phone's
+ * cash price. Rates belong to the band, not the handset: a phone's only money field is
+ * `cashPriceCents`.
  */
-export const phonePricing = sqliteTable(
-	'phone_pricing',
-	{
-		id: integer('id').primaryKey({ autoIncrement: true }),
-		phoneId: integer('phone_id')
-			.notNull()
-			.references(() => phones.phoneId, { onDelete: 'cascade' }),
-		riskGroup: text('risk_group', { enum: ['A', 'B', 'C'] }).notNull(),
-		depositBps: integer('deposit_bps').notNull(),
-		interestBps: integer('interest_bps').notNull()
-	},
-	(table) => [
-		// The lookup the quote does on every catalogue render, and the guarantee that a phone can
-		// never end up with two conflicting rates for the same band.
-		uniqueIndex('phone_pricing_phone_group').on(table.phoneId, table.riskGroup)
-	]
-);
+export const riskGroupRates = sqliteTable('risk_group_rates', {
+	riskGroup: text('risk_group', { enum: ['A', 'B', 'C'] }).primaryKey(),
+	depositBps: integer('deposit_bps').notNull(),
+	interestBps: integer('interest_bps').notNull()
+});
 
 export const applicationStatuses = ['draft', 'submitted'] as const;
 export type ApplicationStatus = (typeof applicationStatuses)[number];
@@ -57,9 +40,21 @@ export type ApplicationStatus = (typeof applicationStatuses)[number];
 export const applications = sqliteTable(
 	'applications',
 	{
-		/** The uuid minted by POST /api/applications. This is the applicant's reference. */
+		/** Internal uuid. The applicant-facing reference is `publicReference`, not this. */
 		id: text('id').primaryKey(),
 		status: text('status', { enum: applicationStatuses }).notNull().default('draft'),
+
+		/**
+		 * sha256 of the session token that lives in the `yl_app` cookie. The raw token is never
+		 * stored. GET/PATCH refuse unless the cookie's token hashes to this value.
+		 */
+		sessionTokenHash: text('session_token_hash').notNull(),
+		/**
+		 * What the applicant reads off review and confirmation — short, unique, and not the
+		 * primary key. Confirmation URLs are keyed by this, so the internal id never appears
+		 * in a bookmark or a phone call.
+		 */
+		publicReference: text('public_reference').notNull(),
 
 		firstName: text('first_name'),
 		lastName: text('last_name'),
@@ -78,6 +73,10 @@ export const applications = sqliteTable(
 		riskGroup: text('risk_group', { enum: ['A', 'B', 'C'] }),
 
 		monthlyIncomeCents: integer('monthly_income_cents'),
+		/** MIME of the proof file on disk — present once the income step is complete. */
+		proofMime: text('proof_mime'),
+		/** Original upload name, for display when the applicant returns to this step. */
+		proofFilename: text('proof_filename'),
 		phoneId: integer('phone_id').references(() => phones.phoneId, { onDelete: 'set null' }),
 		consentAt: text('consent_at'),
 
@@ -116,18 +115,11 @@ export const applications = sqliteTable(
 		uniqueIndex('applications_id_number_submitted')
 			.on(table.idNumber)
 			.where(sql`${table.status} = 'submitted'`),
+		uniqueIndex('applications_public_reference').on(table.publicReference),
 		index('applications_status').on(table.status)
 	]
 );
 
-export const phonesRelations = relations(phones, ({ many }) => ({
-	pricing: many(phonePricing)
-}));
-
-export const phonePricingRelations = relations(phonePricing, ({ one }) => ({
-	phone: one(phones, { fields: [phonePricing.phoneId], references: [phones.phoneId] })
-}));
-
 export type PhoneRow = typeof phones.$inferSelect;
-export type PhonePricingRow = typeof phonePricing.$inferSelect;
+export type RiskGroupRateRow = typeof riskGroupRates.$inferSelect;
 export type ApplicationRow = typeof applications.$inferSelect;

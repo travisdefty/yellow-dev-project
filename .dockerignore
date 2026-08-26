@@ -12,3 +12,10 @@ docs
 !.env.test
 *.log
 **/*.log
+# Local SQLite and uploaded proofs must not enter the image.
+**/data
+**/local.db
+**/proofs
+**/*.db
+**/*.db-wal
+**/*.db-shm

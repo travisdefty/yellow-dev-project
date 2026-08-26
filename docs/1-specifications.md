@@ -27,11 +27,11 @@ Collection points only if time remains. Not a step.
 - Ask for ID number and date of birth. An SA ID has no century; DOB supplies it and is a cross-check. Bad checksum → ID field. ID date vs DOB mismatch → both fields (typo, not ineligible).
 - Age 18–65 inclusive, full years in `Africa/Johannesburg`. ID unique (database unique index).
 - Once identity is accepted, ID and date of birth cannot change. Pricing uses age.
-- Money: integer cents and basis points. No floats. Term 360 days. Named constants for term and age bands. Rates live on the pricing row, not in code.
+- Money: integer cents and basis points. No floats. Term 360 days. Named constants for term and age bands. Rates live on the risk-group row, not in code.
 - Quote: `principal = cashPrice * (1 - depositBps/10000)`, `loanAmount = principal * (1 + interestBps/10000)`, `daily = loanAmount / 360`. Assert `deposit + principal == cashPrice`.
-- Risk groups from age: 18–30, 31–50, 51–65. Each phone has one pricing row per group. The client never sends rates, risk group, or quoted amounts.
+- Risk groups from age: 18–30, 31–50, 51–65. Deposit and interest are keyed by risk group, then applied to every phone's cash price. The client never sends rates, risk group, or quoted amounts.
 - Affordability is a submit rule, not a catalogue toggle. Monthly income must be `> 10 ×` monthly price. Monthly price = `dailyInstalmentCents * 30`. The server rejects even if the UI hid the device.
-- POPIA: required placeholder consent checkbox. Wording is not legal copy.
+- POPIA: required placeholder consent checkbox on the details step — the first write of personal information. Wording is not legal copy.
 
 ## API
 
@@ -54,7 +54,7 @@ Tokens only: accent `#fcd806`, primary `#33353d`, surface `#f6f6f6`, Poppins, 5p
 ## Data
 
 - `phones`
-- `phone_pricing` — one row per risk group
+- `risk_group_rates` — one row per risk group
 - `applications` — bio, income, phone choice, stored quote, consent, optional proof file
 
 ## Out of scope

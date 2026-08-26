@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import type { SubmitFunction } from '@sveltejs/kit';
 	import type { QuotedPhone } from '$lib/catalogue';
 	import { formatCents, formatCentsExact } from '$lib/format';
 	import DeviceSilhouette from '$lib/devices/DeviceSilhouette.svelte';
@@ -12,6 +13,18 @@
 	// so every card that renders is one the applicant can actually choose.
 	type Props = { phone: QuotedPhone; selected?: boolean };
 	let { phone, selected = false }: Props = $props();
+
+	let submitting = $state(false);
+	const submit: SubmitFunction = () => {
+		submitting = true;
+		return async ({ update }) => {
+			try {
+				await update();
+			} finally {
+				submitting = false;
+			}
+		};
+	};
 </script>
 
 <!--
@@ -53,7 +66,7 @@
 		<dt>Deposit today</dt>
 		<dd class="text-right font-semibold">{formatCents(phone.depositCents)}</dd>
 		<dt>Total to pay</dt>
-		<dd class="text-right font-semibold">{formatCents(phone.totalPayableCents)}</dd>
+		<dd class="text-right font-semibold">{formatCentsExact(phone.totalPayableCents)}</dd>
 	</dl>
 
 	<Separator />
@@ -71,10 +84,16 @@
 		from the stored draft. Hiding a device the applicant cannot afford is a courtesy, not the
 		rule — the action refuses a forged id regardless of what the catalogue chose to render.
 	-->
-	<form method="POST" use:enhance>
+	<form method="POST" use:enhance={submit}>
 		<input type="hidden" name="phoneId" value={phone.phoneId} />
-		<Button type="submit" size="pill" variant={selected ? 'outline' : 'default'} class="w-full">
-			{selected ? 'Keep this phone' : 'Select this phone'}
+		<Button
+			type="submit"
+			size="pill"
+			variant={selected ? 'outline' : 'default'}
+			disabled={submitting}
+			class="w-full"
+		>
+			{submitting ? 'Selecting…' : selected ? 'Keep this phone' : 'Select this phone'}
 		</Button>
 	</form>
 </Card>

@@ -5,7 +5,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import FieldError from '$lib/components/FieldError.svelte';
-	import { detailsSchema } from '@yellow/domain';
+	import { detailsStepSchema } from '@yellow/domain';
 	import { validatedSubmit } from '$lib/forms';
 	import type { ActionData, PageData } from './$types';
 
@@ -32,7 +32,8 @@
 			idNumber: data.draft.idNumber ?? '',
 			dobDay: day,
 			dobMonth: month,
-			dobYear: year
+			dobYear: year,
+			consent: Boolean(data.draft.consented)
 		};
 	});
 
@@ -43,13 +44,15 @@
 	let dobDay = $state(seed.dobDay);
 	let dobMonth = $state(seed.dobMonth);
 	let dobYear = $state(seed.dobYear);
+	let consent = $state(seed.consent);
 	// With JavaScript on, `validatedSubmit` sets these directly — from its own client-side parse, or
 	// from what the action sent back. With JavaScript off there is no parse and no enhance callback:
 	// the action's `fail()` re-renders this page and its errors arrive on the `form` prop, which is
 	// then the only place they exist. Client errors win when both are present, so the two paths
 	// never disagree.
 	let clientErrors = $state<Record<string, string> | null>(null);
-	const errors = $derived(clientErrors ?? form?.errors ?? {});
+	let submitting = $state(false);
+	const errors = $derived<Record<string, string>>(clientErrors ?? form?.errors ?? {});
 
 	// Once identity is accepted the server ignores idNumber/dob from the client outright, so there
 	// is no point letting the applicant edit them here either — locking them in the UI matches what
@@ -67,15 +70,17 @@
 	// The client composes 'dob' the same way the server does, so the same schema can run on both
 	// sides and produce the same errors.
 	const submit = validatedSubmit(
-		detailsSchema,
+		detailsStepSchema,
 		() => ({
 			firstName,
 			lastName,
 			mobile,
 			idNumber,
-			dob: `${dobYear}-${dobMonth.padStart(2, '0')}-${dobDay.padStart(2, '0')}`
+			dob: `${dobYear}-${dobMonth.padStart(2, '0')}-${dobDay.padStart(2, '0')}`,
+			consent
 		}),
-		(e) => (clientErrors = e)
+		(e) => (clientErrors = e),
+		(pending) => (submitting = pending)
 	);
 </script>
 
@@ -208,5 +213,30 @@
 		<FieldError id="dob-error" message={errors.dob} />
 	</fieldset>
 
-	<Button size="pill" type="submit" disabled={!complete} class="mt-2">Continue</Button>
+	<!--
+		A placeholder, and marked as one. The real wording of a POPIA consent is a legal job, not a
+		developer's guess — the checkbox and the fact that it is required are the parts that matter
+		to the shape of the application. It lives here, not on review, because this is the write that
+		first stores personal information.
+	-->
+	<div>
+		<label class="flex items-start gap-3 text-sm">
+			<input
+				type="checkbox"
+				name="consent"
+				bind:checked={consent}
+				aria-describedby="consent-error"
+				class="mt-0.5 size-5 shrink-0 rounded-sm accent-accent"
+			/>
+			<span class="text-muted-foreground">
+				I agree that Yellow may process my personal information to assess this application.
+				<span class="italic">(Placeholder wording.)</span>
+			</span>
+		</label>
+		<FieldError id="consent-error" message={errors.consent} />
+	</div>
+
+	<Button size="pill" type="submit" disabled={!complete || submitting} class="mt-2">
+		{submitting ? 'Saving…' : 'Continue'}
+	</Button>
 </form>

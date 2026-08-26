@@ -3,10 +3,11 @@
  * generated SQL in ./drizzle (see src/lib/server/db/index.ts).
  */
 import { defineConfig } from 'drizzle-kit';
+import { DB_PATH } from './src/lib/server/data-paths.ts';
 
 export default defineConfig({
 	dialect: 'sqlite',
 	schema: './src/lib/server/db/schema.ts',
 	out: './drizzle',
-	dbCredentials: { url: process.env.DB_PATH ?? './local.db' }
+	dbCredentials: { url: DB_PATH }
 });

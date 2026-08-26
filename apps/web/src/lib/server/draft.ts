@@ -8,8 +8,8 @@
  * pure functions over an application and did not move at all.
  *
  * `yl_draft` is gone. It carried the applicant's ID number and date of birth in a cookie, which
- * was a phase-2 expedient and never a good idea; only the opaque `yl_app` id remains, and the
- * personal data now lives on one row on the server.
+ * was a phase-2 expedient and never a good idea. `yl_app` remains, now as a browser-session cookie
+ * holding `{applicationId}.{sessionToken}` — the id alone is not enough to read or patch a row.
  *
  * Reads and writes go through `event.fetch` rather than by calling the handlers directly. That is
  * deliberate: it exercises the same HTTP boundary an external client would, so the endpoints
@@ -18,14 +18,13 @@
  * is outside `/apply`, so this never re-enters the hook that called it.
  */
 import { redirect, type Cookies, type RequestEvent } from '@sveltejs/kit';
-import { dev } from '$app/environment';
 import type { PatchBody, RiskGroup } from '@yellow/domain';
 import type { ActionFailure } from '$lib/field-errors';
-import type { Application } from '$lib/server/api/applications';
+import type { Application, CreatedApplication, ProofUpload } from '$lib/server/api/applications';
+import { patchIncomeWithProof } from '$lib/server/api/applications';
+import { isApiError } from '$lib/server/api/errors';
 import { STEP_ORDER, nextRequiredStep, type Step } from '$lib/server/api/steps';
-
-const APP_COOKIE = 'yl_app';
-const MAX_AGE = 60 * 60 * 24 * 7; // 7 days
+import { assertSession, clearAppCookie, readAppCookie, setAppCookie } from '$lib/server/app-session';
 
 /**
  * The wizard's name for an application. Unchanged in shape from the cookie era, which is why the
@@ -33,37 +32,39 @@ const MAX_AGE = 60 * 60 * 24 * 7; // 7 days
  */
 export type Draft = Application;
 
-// Opaque, carries nothing sensitive, and is the reference the applicant reads off the confirmation
-// page. Scoped to '/' so it survives a trip to the landing page and back.
-const cookieOpts = {
-	path: '/',
-	httpOnly: true,
-	sameSite: 'lax' as const,
-	secure: !dev,
-	maxAge: MAX_AGE
-};
-
 type Event = Pick<RequestEvent, 'fetch' | 'cookies'>;
+
+/** Success carries the updated application; failure carries exactly what a `fail()` wants. */
+export type WriteResult =
+	| { ok: true; draft: Draft }
+	| { ok: false; status: number; failure: ActionFailure };
+
+const noDraft: WriteResult = {
+	ok: false,
+	status: 400,
+	failure: { message: 'No application in progress.' }
+};
 
 /**
  * The application this browser is working on, starting one if it has none.
  *
  * A submitted application is deliberately not resumed. The row stays as the record it now is, and
  * the applicant gets a fresh one — so a back-button return to the wizard after submitting starts
- * a new application rather than resurrecting a finished one.
+ * a new application rather than resurrecting a finished one. Confirmation is excluded from the
+ * hook that calls this, or landing on the success page would mint that fresh row immediately.
  */
 export async function readDraft(event: Event): Promise<Draft> {
-	const applicationId = event.cookies.get(APP_COOKIE);
+	const session = readAppCookie(event.cookies);
 
-	if (applicationId) {
-		const response = await event.fetch(`/api/applications/${applicationId}`);
+	if (session) {
+		const response = await event.fetch(`/api/applications/${session.applicationId}`);
 		if (response.ok) {
 			const application = (await response.json()) as Draft;
 			if (application.status === 'draft') return application;
 		}
-		// A 404 means the cookie outlived its row — an expired demo database, or an id from another
-		// deployment. Falling through starts a new application rather than 500ing on every request
-		// until the applicant works out how to clear their cookies.
+		// 401 / 404: a stale cookie, an expired demo database, or an id from another deployment.
+		// Falling through starts a new application rather than 500ing on every request until the
+		// applicant works out how to clear their cookies.
 	}
 
 	return startApplication(event);
@@ -73,15 +74,13 @@ async function startApplication(event: Event): Promise<Draft> {
 	const response = await event.fetch('/api/applications', { method: 'POST' });
 	if (!response.ok) throw new Error(`Could not start an application: ${response.status}`);
 
-	const application = (await response.json()) as Draft;
-	event.cookies.set(APP_COOKIE, application.applicationId, cookieOpts);
+	const created = (await response.json()) as CreatedApplication;
+	const { sessionToken, ...application } = created;
+	if (!sessionToken) throw new Error('Could not start an application: missing session token.');
+
+	setAppCookie(event.cookies, { applicationId: application.applicationId, sessionToken });
 	return application;
 }
-
-/** Success carries the updated application; failure carries exactly what a `fail()` wants. */
-export type WriteResult =
-	| { ok: true; draft: Draft }
-	| { ok: false; status: number; failure: ActionFailure };
 
 /**
  * One step's worth of answers, written through the API.
@@ -93,10 +92,10 @@ export type WriteResult =
  * the API gives an external client and the message under the input are the same string.
  */
 export async function writeDraft(event: Event, body: PatchBody): Promise<WriteResult> {
-	const applicationId = event.cookies.get(APP_COOKIE);
-	if (!applicationId) return { ok: false, status: 400, failure: { message: 'No application in progress.' } };
+	const session = readAppCookie(event.cookies);
+	if (!session) return noDraft;
 
-	const response = await event.fetch(`/api/applications/${applicationId}`, {
+	const response = await event.fetch(`/api/applications/${session.applicationId}`, {
 		method: 'PATCH',
 		headers: { 'content-type': 'application/json' },
 		body: JSON.stringify(body)
@@ -108,6 +107,32 @@ export async function writeDraft(event: Event, body: PatchBody): Promise<WriteRe
 }
 
 /**
+ * Income is the one step that arrives as multipart — proof bytes cannot ride a JSON patch. Calls
+ * the handler directly rather than through `event.fetch`, same as the API rules but without
+ * pretending a file fits in JSON. The session is checked here because this path never hits the
+ * HTTP adapter that would otherwise refuse a request without a matching token.
+ */
+export async function writeIncomeWithProof(
+	event: Event,
+	monthlyIncomeCents: number,
+	proof: ProofUpload | 'keep'
+): Promise<WriteResult> {
+	const session = readAppCookie(event.cookies);
+	if (!session) return noDraft;
+
+	try {
+		assertSession(session.applicationId, session.sessionToken);
+		const draft = patchIncomeWithProof(session.applicationId, monthlyIncomeCents, proof);
+		return { ok: true, draft };
+	} catch (error) {
+		if (isApiError(error)) {
+			return { ok: false, status: error.status, failure: error.body };
+		}
+		throw error;
+	}
+}
+
+/**
  * Abandon the application outright.
  *
  * Only the cookie is dropped; the row is left where it is. An abandoned draft is a real thing that
@@ -116,7 +141,7 @@ export async function writeDraft(event: Event, body: PatchBody): Promise<WriteRe
  * The next visit to `/apply` starts a new application.
  */
 export function resetApplication(cookies: Cookies): void {
-	cookies.delete(APP_COOKIE, { path: '/' });
+	clearAppCookie(cookies);
 }
 
 const STEP_PATHS: Record<Step, string> = {

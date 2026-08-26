@@ -22,8 +22,11 @@ Thumbs.db
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
-# SQLite lives on a Fly volume in production and in a scratch file locally.
+# Runtime data: SQLite and income proofs. Production uses the Fly volume at /data.
+data/
+# Leftovers from when these sat in the app root.
 local.db
+proofs/
 test.db
 *.db-shm
 *.db-wal

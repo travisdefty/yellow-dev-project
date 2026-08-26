@@ -8,6 +8,27 @@
       "when": 1787688940529,
       "tag": "0000_regular_wildside",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1787691031850,
+      "tag": "0001_peaceful_epoch",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1787765901254,
+      "tag": "0002_romantic_fixer",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1787766230456,
+      "tag": "0003_risk_group_rates",
+      "breakpoints": true
     }
   ]
 }

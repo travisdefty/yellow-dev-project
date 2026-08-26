@@ -1,4 +1,4 @@
-import { getApplication } from '$lib/server/api/applications';
+import { getApplicationByPublicReference } from '$lib/server/api/applications';
 import { isApiError } from '$lib/server/api/errors';
 import type { PageServerLoad } from './$types';
 
@@ -8,9 +8,8 @@ import type { PageServerLoad } from './$types';
  * clearest demonstration that the application was actually persisted: the numbers below come from
  * the row, on a request that carries nothing else.
  *
- * Read through the handler directly rather than over `event.fetch`, because this route is outside
- * `/apply` and has no application in `locals` to work from; there is nothing for an HTTP hop to
- * prove here.
+ * Looked up by the public reference, not the internal application id, so the primary key never
+ * appears in a bookmark or a phone call.
  *
  * A reference that does not resolve — mistyped, or from a database that has since been reset —
  * still renders the page with the reference and without the detail, rather than 404ing on someone
@@ -18,8 +17,8 @@ import type { PageServerLoad } from './$types';
  */
 export const load: PageServerLoad = ({ params }) => {
 	try {
-		const application = getApplication(params.slug);
-		// Only a submitted application has a deal to show. A draft id in this URL means someone
+		const application = getApplicationByPublicReference(params.slug);
+		// Only a submitted application has a deal to show. A draft reference in this URL means someone
 		// navigated sideways; the reference is still theirs, but there is nothing agreed to display.
 		if (application.status !== 'submitted') return { slug: params.slug };
 

@@ -36,10 +36,12 @@ SQLite-specific types — so moving to Postgres is a driver swap and a regenerat
 cost is that the app cannot scale past one machine, because a volume cannot be shared.
 
 **Also known and not fixed:** ID numbers and dates of birth are stored in the clear, which is a real
-POPIA gap next to a consent checkbox whose wording is a placeholder. The API is unauthenticated —
-`/api/applications/:id` is a capability URL whose id lives in an `httpOnly` cookie, which is
-adequate for a demo and not for anything else. Income-proof upload, mock payment and collection
-points are out, in that order.
+POPIA gap next to a consent checkbox whose wording is a placeholder. The checkbox sits on the
+details step, because that is when the row first receives personal information. Income-proof
+upload, mock payment and collection points are out, in that order. Application reads and writes
+require the browser-session cookie (`yl_app`) that holds the application id plus a secret token;
+knowing the id alone is not enough. The applicant-facing reference is a short public code
+(`YL-…`), not the internal uuid.
 
 ## How it is put together
 
@@ -47,9 +49,10 @@ points are out, in that order.
 works with JavaScript disabled: forms are real form actions, and the whole flow was verified by
 driving it over plain HTML and HTTP with no browser involved.
 
-**Nothing priced reaches the browser.** Rates live on `phone_pricing` rows, the quote is computed
-server-side, and the components receive finished cents. `apps/web/src/lib/server/` makes importing
-any of it from client code a build error rather than a review comment.
+**Nothing priced reaches the browser.** Rates live on `risk_group_rates` (one row per band), the
+quote is computed server-side from that band and the phone's cash price, and the components receive
+finished cents. `apps/web/src/lib/server/` makes importing any of it from client code a build error
+rather than a review comment.
 
 **The client never sends anything priced either.** `patchSchema` is a strict discriminated union, so
 posting `riskGroup`, `depositBps` or `dailyCents` is a 400 rather than a silently ignored field. The
@@ -79,14 +82,15 @@ would silently restate the offer every time a pricing row moved.
 
 | | |
 |---|---|
-| `POST /api/applications` | start one; returns the id that becomes the applicant's reference |
-| `GET /api/applications/:id` | the application, with the chosen phone priced |
-| `PATCH /api/applications/:id` | one step's answers — `{ step, data }`. Submit is the last patch |
-| `GET /api/phones?applicationId=&page=` | catalogue, quoted at that application's band, filtered to what it can afford, paginated |
+| `POST /api/applications` | start one; returns the DTO plus a one-time `sessionToken` stored in the session cookie |
+| `GET /api/applications/:id` | the application, with the chosen phone priced; requires the session cookie |
+| `PATCH /api/applications/:id` | one step's answers — `{ step, data }`. Submit is the last patch; requires the session cookie |
+| `GET /api/phones?page=` | catalogue, quoted at the cookie's application's band, filtered to what it can afford, paginated |
 
 The wizard calls these through `event.fetch`, which SvelteKit resolves straight to the handler with
-no network round trip — a real boundary at no cost. `GET /phones` takes an application id rather
-than a risk group, because a risk group in a query string is a rate the client got to choose.
+no network round trip — a real boundary at no cost. `GET /phones` takes the application from the
+session cookie rather than a risk group, because a risk group in a query string is a rate the
+client got to choose. Confirmation URLs use the public reference (`YL-…`), not the internal id.
 
 ## Local
 
@@ -95,10 +99,11 @@ pnpm install
 pnpm dev        # http://localhost:5173
 pnpm check      # svelte-check
 pnpm build      # adapter-node → apps/web/build
+pnpm db:studio  # browse SQLite in the browser
 ```
 
 The database is created, migrated and seeded on first import — no setup step. `DB_PATH` defaults to
-`./local.db`; delete that file to start over.
+`./data/yellow.db`; proofs default to `./data/proofs`.
 
 ```sh
 cd apps/web && pnpm exec drizzle-kit generate   # after editing db/schema.ts
@@ -108,8 +113,24 @@ To run the production build the way Fly does, `ORIGIN` must match the address yo
 every form action answers 403:
 
 ```sh
-cd apps/web && ORIGIN=http://localhost:3000 DB_PATH=./local.db node server.js
+cd apps/web && ORIGIN=http://localhost:3000 node server.js
 ```
+
+## Example applicants
+
+Copy these through the wizard. Each ID passes the checksum and agrees with the date of birth. Tick the consent box on details. Proof of income is required but not read — upload [`docs/example-payslip.jpg`](docs/example-payslip.jpg). A second submit with the same ID fails until that row is deleted (see below).
+
+| | Sipho Nkosi | Thandi Mokoena | Johan van der Berg |
+|---|---|---|---|
+| First name | Sipho | Thandi | Johan |
+| Last name | Nkosi | Mokoena | van der Berg |
+| Mobile | `0821234567` | `0734567890` | `0612345678` |
+| ID number | `0003155808086` | `8402200912087` | `6401106200086` |
+| Date of birth | 15 / 03 / 2000 | 20 / 02 / 1984 | 10 / 01 / 1964 |
+| Monthly income | `18000` | `8500` | `25000` |
+| Risk band | A (18–30) | B (31–50) | C (51–65) |
+
+`18000` is enough for every handset in every band. `8500` hides the flagships and leaves the cheaper phones.
 
 ## Hosting
 
@@ -123,3 +144,53 @@ fly deploy --ha=false
 
 - Live: <https://app.yellow.travisdefty.co.za/>
 - Fly default: <https://yellow-travisdefty.fly.dev>
+
+## Inspect / reset the database
+
+SQLite is a file, not a server. There is no admin API — ID numbers live in the clear, and a list or delete route would be a public leak. Browse and edit the file with a client.
+
+Local: `apps/web/data/yellow.db`. Remote: `/data/yellow.db` on the Fly volume. Delete **rows in `applications`**, not the whole file, unless you want a full wipe. Submitted ID uniqueness (`applications_id_number_submitted`) is why a second test with the same ID fails until that row is gone. Proof files live beside the DB (`apps/web/data/proofs` locally, `/data/proofs` on Fly); deleting rows does not remove them.
+
+**View locally** — Drizzle Studio, fine while `pnpm dev` is running:
+
+```sh
+pnpm db:studio
+```
+
+Or `sqlite3 apps/web/data/yellow.db` then `SELECT id, status, id_number, public_reference, created_at FROM applications;`
+
+**View on Fly** — the runtime image does not include `sqlite3`. Install it once, then query:
+
+```sh
+fly ssh console -a yellow-travisdefty -C "apt-get update && apt-get install -y sqlite3"
+fly ssh console -a yellow-travisdefty -C "sqlite3 /data/yellow.db 'SELECT id, status, id_number, public_reference FROM applications;'"
+```
+
+Or copy the file down and open it in Studio. If the app is live, copy `.db`, `.db-wal`, and `.db-shm` together:
+
+```sh
+fly sftp get -a yellow-travisdefty /data/yellow.db ./yellow-prod.db
+```
+
+**Empty applications locally** (keep phones and rates):
+
+```sh
+sqlite3 apps/web/data/yellow.db "DELETE FROM applications;"
+rm -rf apps/web/data/proofs
+```
+
+**Full local wipe.** Next `pnpm dev` recreates the file and reseeds the catalogue:
+
+```sh
+rm -f apps/web/data/yellow.db apps/web/data/yellow.db-wal apps/web/data/yellow.db-shm
+rm -rf apps/web/data/proofs
+```
+
+**Empty applications on Fly:**
+
+```sh
+fly ssh console -a yellow-travisdefty -C "sqlite3 /data/yellow.db 'DELETE FROM applications;'"
+fly ssh console -a yellow-travisdefty -C "rm -rf /data/proofs"
+```
+
+Delete one row by public code the same way: `DELETE FROM applications WHERE public_reference = 'YL-…';`. Do not `rm /data/yellow.db` while the process is running. Stop the machine first if you ever need a full remote wipe; boot will migrate and reseed phones/rates if the file is gone.

@@ -6,9 +6,9 @@ declare global {
 	namespace App {
 		// interface Error {}
 		interface Locals {
-			// Only set by hooks.server.ts for pathnames under /apply — everywhere else it is genuinely
-			// absent, not just unused. Marking it optional says that honestly instead of making every
-			// route outside the wizard assert a value that was never populated.
+			// Only set by hooks.server.ts for wizard pathnames under /apply — confirmation, and every
+			// route outside `/apply`, leave it unset. Marking it optional says that honestly instead
+			// of making those routes assert a value that was never populated.
 			draft?: Draft;
 		}
 		// interface PageData {}

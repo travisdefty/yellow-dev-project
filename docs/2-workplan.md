@@ -36,12 +36,12 @@ The same three endpoints on `apps/api`. Point the web app at Fastify. Delete the
 
 ## 5. Postgres, persist, test again
 
-Drizzle for `phones`, `phone_pricing`, `applications`. Unique ID. Seed each phone with three pricing rows. README and Loom. Mock payment only if time remains.
+Drizzle for `phones`, `risk_group_rates`, `applications`. Unique ID. Seed three rate rows (one per risk group) and the catalogue. README and Loom. Mock payment only if time remains.
 
 **Done when** a second application on the same ID fails at the database, and a refresh after a patch still shows saved data.
 
 ## Cut order
 
-Bottom up: mock payment → income file upload → pagination (capped list) → risk bands (one rate row per phone).
+Bottom up: mock payment → income file upload → pagination (capped list) → risk bands (one rate row per group).
 
 Do not cut the wizard, unique ID, or server-side quote. If Fastify is late, demo on the SvelteKit routes rather than shipping an empty API app.

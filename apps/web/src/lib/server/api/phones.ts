@@ -1,18 +1,17 @@
 /**
  * `GET /phones` — the catalogue, priced for one application's locked risk group and paginated.
  *
- * The endpoint takes an application id rather than a risk group, and that is deliberate: a risk
+ * The handler takes an application id rather than a risk group, and that is deliberate: a risk
  * group arriving as a query parameter would be a rate the client got to choose. The band is read
- * from the record, where it was written server-side at the moment identity was accepted.
- *
- * Everything priced happens on this side of the wire. What comes back is finished cents — the card
- * that renders it contains no rate, no term, and no arithmetic.
+ * from the record, where it was written server-side at the moment identity was accepted. The HTTP
+ * adapter supplies the id from the session cookie so the query string cannot name someone else's
+ * application.
  */
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { isAffordable, minimumIncomeFor, quote, type RiskGroup } from '@yellow/domain';
 import type { QuotedPhone } from '$lib/catalogue';
 import { db } from '../db/index.ts';
-import { phonePricing, phones } from '../db/schema.ts';
+import { phones, riskGroupRates } from '../db/schema.ts';
 import { messageError } from './errors.ts';
 import { getApplication } from './applications.ts';
 
@@ -74,8 +73,19 @@ export function listPhones({
 	};
 }
 
-/** Every phone joined to its row for one band, then quoted. Twelve rows; one query. */
+/** Every phone quoted at one band. Rates come from the group; cash price from the handset. */
 function pricedCatalogue(riskGroup: RiskGroup): QuotedPhone[] {
+	const rates = db
+		.select({
+			depositBps: riskGroupRates.depositBps,
+			interestBps: riskGroupRates.interestBps
+		})
+		.from(riskGroupRates)
+		.where(eq(riskGroupRates.riskGroup, riskGroup))
+		.get();
+
+	if (!rates) throw new Error(`No rates for risk group ${riskGroup}`);
+
 	const rows = db
 		.select({
 			phoneId: phones.phoneId,
@@ -84,20 +94,14 @@ function pricedCatalogue(riskGroup: RiskGroup): QuotedPhone[] {
 			model: phones.model,
 			colour: phones.colour,
 			storageGb: phones.storageGb,
-			cashPriceCents: phones.cashPriceCents,
-			depositBps: phonePricing.depositBps,
-			interestBps: phonePricing.interestBps
+			cashPriceCents: phones.cashPriceCents
 		})
 		.from(phones)
-		.innerJoin(
-			phonePricing,
-			and(eq(phonePricing.phoneId, phones.phoneId), eq(phonePricing.riskGroup, riskGroup))
-		)
 		.orderBy(phones.phoneId)
 		.all();
 
-	return rows.map(({ depositBps, interestBps, ...phone }) => ({
+	return rows.map((phone) => ({
 		...phone,
-		...quote(phone.cashPriceCents, { depositBps, interestBps })
+		...quote(phone.cashPriceCents, rates)
 	}));
 }

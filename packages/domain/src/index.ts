@@ -18,6 +18,7 @@ export { MONTHLY_DAYS, INCOME_MULTIPLE, minimumIncomeFor, isAffordable } from '.
 
 export {
 	detailsSchema,
+	detailsStepSchema,
 	incomeSchema,
 	phoneSelectionSchema,
 	submitSchema,
@@ -25,6 +26,7 @@ export {
 } from './schemas.ts';
 export type {
 	DetailsInput,
+	DetailsStepInput,
 	IncomeInput,
 	PhoneSelectionInput,
 	SubmitInput,

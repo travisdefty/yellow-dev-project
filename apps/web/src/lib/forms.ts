@@ -13,11 +13,14 @@ import { fieldErrors, type ActionFailure, type Parser } from '$lib/field-errors'
  * the values do not parse, so field errors appear without touching the network.
  *
  * `values()` is a thunk rather than a value because it is read at submit time, not at setup time.
+ * `setSubmitting` is optional: it is true only after the client parse succeeds, and is cleared when
+ * the action returns — so a cancelled submit never looks like it is in flight.
  */
 export function validatedSubmit<T>(
 	schema: Parser<T>,
 	values: () => unknown,
-	setErrors: (errors: Record<string, string>) => void
+	setErrors: (errors: Record<string, string>) => void,
+	setSubmitting?: (pending: boolean) => void
 ): SubmitFunction {
 	return ({ cancel }) => {
 		const parsed = schema.safeParse(values());
@@ -27,18 +30,23 @@ export function validatedSubmit<T>(
 			return;
 		}
 		setErrors({});
+		setSubmitting?.(true);
 
 		return async ({ result, update }) => {
-			if (result.type === 'failure') {
-				const failure = result.data as ActionFailure | undefined;
-				if (failure?.errors) setErrors(failure.errors);
-				// A non-field error — affordability, say, whose input lives two steps back. There is no
-				// input to hang it on, so it is announced instead.
-				if (failure?.message) toast.error(failure.message);
-				return;
+			try {
+				if (result.type === 'failure') {
+					const failure = result.data as ActionFailure | undefined;
+					if (failure?.errors) setErrors(failure.errors);
+					// A non-field error — affordability, say, whose input lives two steps back. There is no
+					// input to hang it on, so it is announced instead.
+					if (failure?.message) toast.error(failure.message);
+					return;
+				}
+				// `reset: false` because a step that fails server-side must not blank what was typed.
+				await update({ reset: false });
+			} finally {
+				setSubmitting?.(false);
 			}
-			// `reset: false` because a step that fails server-side must not blank what was typed.
-			await update({ reset: false });
 		};
 	};
 }

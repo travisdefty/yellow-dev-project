@@ -1,9 +1,14 @@
 import type { RequestHandler } from './$types';
 import { getApplication, patchApplication } from '$lib/server/api/applications';
 import { messageError } from '$lib/server/api/errors';
+import { requireAppSession } from '$lib/server/app-session';
 import { errorResponse, respond } from '$lib/server/respond';
 
-export const GET: RequestHandler = ({ params }) => respond(() => getApplication(params.id));
+export const GET: RequestHandler = (event) =>
+	respond(() => {
+		requireAppSession(event, event.params.id);
+		return getApplication(event.params.id);
+	});
 
 /**
  * Every step writes through here, submit included. `patchApplication` owns the rules; this only
@@ -11,12 +16,16 @@ export const GET: RequestHandler = ({ params }) => respond(() => getApplication(
  * why the parse failure is turned into a response here rather than thrown past `respond`, whose
  * try/catch is long finished by the time an awaited parse rejects.
  */
-export const PATCH: RequestHandler = async ({ params, request }) => {
+export const PATCH: RequestHandler = async (event) => {
+	const { params, request } = event;
 	let body: unknown;
 	try {
 		body = await request.json();
 	} catch {
 		return errorResponse(messageError(400, 'Expected a JSON body.'));
 	}
-	return respond(() => patchApplication(params.id, body));
+	return respond(() => {
+		requireAppSession(event, params.id);
+		return patchApplication(params.id, body);
+	});
 };

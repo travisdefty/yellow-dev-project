@@ -20,10 +20,10 @@
 		No `use:enhance`. This is a one-shot destructive action followed by a redirect out of the
 		wizard; a plain form submit is the whole behaviour, and there is no error state to catch.
 	-->
-	<form method="POST" class="flex flex-col-reverse gap-3 min-[420px]:flex-row">
-		<Button size="pill" variant="outline" href={data.resumeAt} class="flex-1">
+	<form method="POST" class="flex flex-col-reverse gap-3 sm:flex-row sm:flex-wrap">
+		<Button size="pill" variant="outline" href={data.resumeAt} class="w-full sm:w-auto">
 			Keep my application
 		</Button>
-		<Button size="pill" type="submit" class="flex-1">Discard and start over</Button>
+		<Button size="pill" type="submit" class="w-full sm:w-auto">Discard and start over</Button>
 	</form>
 </div>

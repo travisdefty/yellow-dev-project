@@ -32,6 +32,13 @@ export const actions = {
 		// 400 rather than a silent discard — but the honest form never triggers it.
 		const locked = Boolean(draft.identityAcceptedAt);
 
+		// A checkbox posts 'on' when ticked and nothing at all when not. `detailsStepSchema` requires
+		// consent to be literally true, so an unticked box is not a body the API accepts — refused
+		// here with the same wording the schema uses, rather than inventing a `false` to send it.
+		if (form.get('consent') !== 'on') {
+			return fail(400, { errors: { consent: 'Please agree before continuing.' } });
+		}
+
 		const result = await writeDraft(event, {
 			step: 'details',
 			data: {
@@ -39,7 +46,8 @@ export const actions = {
 				lastName: String(form.get('lastName') ?? ''),
 				mobile: String(form.get('mobile') ?? ''),
 				idNumber: locked ? (draft.idNumber ?? '') : String(form.get('idNumber') ?? ''),
-				dob: locked ? (draft.dob ?? '') : composedDob
+				dob: locked ? (draft.dob ?? '') : composedDob,
+				consent: true
 			}
 		});
 

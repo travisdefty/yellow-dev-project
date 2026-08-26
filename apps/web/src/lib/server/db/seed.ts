@@ -41,16 +41,11 @@ export const phoneSeed: readonly PhoneSeed[] = [
  * thinnest credit history; B is the middle band; C (51-65) takes a larger deposit because the
  * 360-day term can run past retirement age.
  *
- * Applied to every phone, so all twelve currently share a band's rates — but they are stored per
- * phone per band, so a single handset can be repriced later with an UPDATE and no schema change.
+ * Three rows, one per group. Every phone is quoted at the applicant's band against its own cash
+ * price; a handset does not carry its own rates.
  */
 export const bandRates: readonly { riskGroup: RiskGroup; depositBps: number; interestBps: number }[] = [
 	{ riskGroup: 'A', depositBps: 1500, interestBps: 2400 },
 	{ riskGroup: 'B', depositBps: 1500, interestBps: 2000 },
 	{ riskGroup: 'C', depositBps: 2000, interestBps: 2800 }
 ];
-
-/** The 36 rows, expanded: every phone against every band. */
-export const pricingSeed = phoneSeed.flatMap((phone) =>
-	bandRates.map((rate) => ({ phoneId: phone.phoneId, ...rate }))
-);

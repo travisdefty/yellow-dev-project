@@ -1,0 +1,6 @@
+# Runtime data (SQLite, uploaded proofs) — not source.
+apps/web/data/
+apps/web/proofs/
+apps/web/local.db
+**/*.db-wal
+**/*.db-shm

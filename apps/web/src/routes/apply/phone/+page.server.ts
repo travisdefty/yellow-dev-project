@@ -11,20 +11,21 @@ import type { Actions, PageServerLoad } from './$types';
  * given a rate, a term or an arithmetic operator, and neither is this file: it forwards a page
  * number and renders what comes back.
  *
- * The application id goes in the query rather than the risk group, because a risk group in a URL is
- * a rate the client got to choose. The band is read from the record, where the server put it.
+ * The application is identified by the session cookie, not a query parameter. The band is read
+ * from the record, where the server put it.
  */
 export const load: PageServerLoad = async ({ locals, url, fetch }) => {
 	const draft = locals.draft!;
 	requireStep(draft, 'phone');
 
-	const params = new URLSearchParams({ applicationId: draft.applicationId });
+	const params = new URLSearchParams();
 	// Absent means "no preference", which is what lets the API default to the page holding the phone
 	// already chosen rather than always page 1.
 	const page = url.searchParams.get('page');
 	if (page !== null) params.set('page', page);
 
-	const response = await fetch(`/api/phones?${params}`);
+	const query = params.toString();
+	const response = await fetch(query ? `/api/phones?${query}` : '/api/phones');
 	if (!response.ok) redirect(303, '/apply/income');
 
 	return {

@@ -16,13 +16,12 @@ import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { sql } from 'drizzle-orm';
+import { DB_PATH } from '../data-paths.ts';
 import * as schema from './schema.ts';
-import { phoneSeed, pricingSeed } from './seed.ts';
+import { bandRates, phoneSeed } from './seed.ts';
 
-// On Fly this is /data/yellow.db on the mounted volume. Locally it is a gitignored file in the
-// web app. Not read through `$env/dynamic/private` because this module is imported by the
-// migration tooling too, which runs outside SvelteKit and has no $env.
-const DB_PATH = process.env.DB_PATH ?? './local.db';
+// On Fly this is /data/yellow.db on the mounted volume. Locally it is
+// ./data/yellow.db, gitignored. Paths come from data-paths.ts so drizzle-kit sees the same file.
 
 // The volume is mounted at /data, but on a first-ever boot the directory can exist while the file
 // does not — and better-sqlite3 will not create a missing *directory* for us.
@@ -53,7 +52,7 @@ function seedCatalogue(): void {
 
 	db.transaction((tx) => {
 		tx.insert(schema.phones).values([...phoneSeed]).run();
-		tx.insert(schema.phonePricing).values(pricingSeed).run();
+		tx.insert(schema.riskGroupRates).values([...bandRates]).run();
 	});
 }
 

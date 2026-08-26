@@ -21,9 +21,14 @@ export type Step = (typeof STEP_ORDER)[number];
  * `null` for an unset column and from a JSON response as a missing key; a strict check would read
  * a null income as "income already given" and let an applicant walk straight past the step.
  */
-export function nextRequiredStep(application: Pick<Application, 'identityAcceptedAt' | 'monthlyIncomeCents' | 'phoneId'>): Step {
-	if (application.identityAcceptedAt == null) return 'details';
-	if (application.monthlyIncomeCents == null) return 'income';
+export function nextRequiredStep(
+	application: Pick<
+		Application,
+		'identityAcceptedAt' | 'consentAt' | 'monthlyIncomeCents' | 'proofFilename' | 'phoneId'
+	>
+): Step {
+	if (application.identityAcceptedAt == null || application.consentAt == null) return 'details';
+	if (application.monthlyIncomeCents == null || application.proofFilename == null) return 'income';
 	if (application.phoneId == null) return 'phone';
 	return 'submit';
 }

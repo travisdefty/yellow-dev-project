@@ -25,15 +25,15 @@
 
 	<Card class="px-4">
 		<p class="text-sm text-muted-foreground">Your reference</p>
-		<!-- Long enough to be read aloud over a phone line, so it does not wrap or shrink. -->
+		<!-- Short public reference, meant to be read aloud — not the internal application id. -->
 		<p class="mt-1 font-mono text-lg tracking-wide">{data.slug}</p>
 	</Card>
 
 	<!--
 		The agreed terms, read back from the stored application rather than from anything carried
-		here in state — this page has no cookie and no wizard behind it, only the reference in the
-		URL. These are the numbers written down at submit, not a fresh quote: if the catalogue were
-		repriced tomorrow, what is shown here would not move.
+		here in state — this page has no cookie and no wizard behind it, only the public reference
+		in the URL, not the internal application id. These are the numbers written down at submit,
+		not a fresh quote: if the catalogue were repriced tomorrow, what is shown here would not move.
 	-->
 	{#if data.phone}
 		<Card class="flex flex-col gap-4 px-4">

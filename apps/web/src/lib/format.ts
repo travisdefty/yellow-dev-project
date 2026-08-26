@@ -16,12 +16,12 @@ const exact = new Intl.NumberFormat('en-ZA', {
 	maximumFractionDigits: 2
 });
 
-/** Rands only. For prices large enough that the cents are noise — cash price, deposit, total. */
+/** Rands only. For prices large enough that the cents are noise — cash price, deposit. */
 export function formatCents(cents: number): string {
 	return whole.format(cents / 100);
 }
 
-/** Rands and cents. For the daily instalment, where a difference of 50c is the whole decision. */
+/** Rands and cents. For the daily instalment and the total payable. */
 export function formatCentsExact(cents: number): string {
 	return exact.format(cents / 100);
 }

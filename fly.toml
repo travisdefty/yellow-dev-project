@@ -16,6 +16,7 @@ primary_region = 'jnb'
   # SQLite on the mounted volume. Everything outside /data is part of the image and is replaced on
   # every deploy, so this is the one path where an application can survive one.
   DB_PATH = '/data/yellow.db'
+  PROOF_DIR = '/data/proofs'
 
 # Create once, before the first deploy that needs it:
 #   fly volumes create yellow_data --region jnb --size 1

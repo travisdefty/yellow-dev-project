@@ -68,6 +68,16 @@ export const detailsSchema = z
 
 export type DetailsInput = z.infer<typeof detailsSchema>;
 
+/**
+ * Identity plus the processing acknowledgement. Kept as an `.extend()` of `detailsSchema` rather
+ * than folded into it, so ID/DOB/age stay one concern and the checkbox is the details *step*'s.
+ */
+export const detailsStepSchema = detailsSchema.extend({
+	consent: z.literal(true, { error: 'Please agree before continuing.' })
+});
+
+export type DetailsStepInput = z.infer<typeof detailsStepSchema>;
+
 export const incomeSchema = z.strictObject({
 	monthlyIncomeCents: z.int().positive()
 });
@@ -82,9 +92,7 @@ export const phoneSelectionSchema = z.strictObject({
 
 export type PhoneSelectionInput = z.infer<typeof phoneSelectionSchema>;
 
-export const submitSchema = z.strictObject({
-	consent: z.literal(true)
-});
+export const submitSchema = z.strictObject({});
 
 export type SubmitInput = z.infer<typeof submitSchema>;
 
@@ -97,15 +105,16 @@ export type SubmitInput = z.infer<typeof submitSchema>;
  * inner schemas are the same four the browser validates against, so the rule the applicant sees
  * and the rule the server enforces are one object, not two that agree today.
  *
- * Nested under `data` rather than flattened with a discriminator field because `detailsSchema`
- * carries a `superRefine` and is therefore a ZodEffects, which cannot be `.extend()`ed.
+ * Nested under `data` rather than flattened onto the discriminator, so each step can keep its own
+ * schema — details carries a `superRefine`, and submit is an empty object on purpose: consent is
+ * recorded on the details write, and submit's job is to store the quote.
  *
  * It lives in the domain package rather than in the web app for the same reason the other four do:
  * this is the API's contract, and the API is meant to be portable to Fastify. Keeping it here also
  * keeps zod a dependency of exactly one package.
  */
 export const patchSchema = z.discriminatedUnion('step', [
-	z.strictObject({ step: z.literal('details'), data: detailsSchema }),
+	z.strictObject({ step: z.literal('details'), data: detailsStepSchema }),
 	z.strictObject({ step: z.literal('income'), data: incomeSchema }),
 	z.strictObject({ step: z.literal('phone'), data: phoneSelectionSchema }),
 	z.strictObject({ step: z.literal('submit'), data: submitSchema })

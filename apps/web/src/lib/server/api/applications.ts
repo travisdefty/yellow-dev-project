@@ -10,23 +10,32 @@
  * function the patch runs, not a route", and that is load-bearing: every rule below is enforced on
  * the write, so no path through the UI — or around it — can reach a state the rules forbid.
  */
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 import {
 	ageOn,
+	incomeSchema,
 	isAffordable,
 	minimumIncomeFor,
 	patchSchema,
 	quote,
 	riskGroupFor,
 	todayInJohannesburg,
-	type DetailsInput,
+	type DetailsStepInput,
 	type PatchBody,
 	type RiskGroup
 } from '@yellow/domain';
 import { fieldErrors } from '$lib/field-errors';
 import { formatCents } from '$lib/format';
+import {
+	ACCEPTED_PROOF_MIME_SET,
+	MAX_PROOF_BYTES,
+	PROOF_TYPE_ERROR,
+	proofMimeFromFilename
+} from '$lib/upload/constants';
+import { hashSessionToken, mintSessionToken } from '../session-token.ts';
 import { db } from '../db/index.ts';
-import { applications, phonePricing, phones, type ApplicationRow } from '../db/schema.ts';
+import { applications, phones, riskGroupRates, type ApplicationRow } from '../db/schema.ts';
+import { saveProof } from '../proof-storage.ts';
 import type { QuotedPhone } from '$lib/catalogue';
 import { fieldError, messageError } from './errors.ts';
 import { isStepUnlocked } from './steps.ts';
@@ -42,6 +51,8 @@ import { isStepUnlocked } from './steps.ts';
  */
 export type Application = {
 	applicationId: string;
+	/** Applicant-facing reference. Confirmation URLs and the review screen show this, not `applicationId`. */
+	publicReference: string;
 	status: 'draft' | 'submitted';
 	firstName?: string;
 	lastName?: string;
@@ -51,6 +62,8 @@ export type Application = {
 	identityAcceptedAt?: string;
 	riskGroup?: RiskGroup;
 	monthlyIncomeCents?: number;
+	proofFilename?: string;
+	proofMime?: string;
 	phoneId?: number;
 	consentAt?: string;
 	cashPriceCents?: number;
@@ -64,7 +77,7 @@ export type Application = {
 	 *
 	 * Attached here rather than left for the review screen to assemble, because a quote is a single
 	 * fact about an application and assembling it in two places is how the summary and the record
-	 * end up disagreeing. Before submit it is computed live from the pricing rows, so an edit to
+	 * end up disagreeing. Before submit it is computed live from the risk-group rates, so an edit to
 	 * income or phone is reflected immediately. After submit it is rebuilt from the columns stored
 	 * on the application, so the confirmation shows the deal that was actually agreed rather than
 	 * whatever the catalogue happens to say today.
@@ -74,10 +87,40 @@ export type Application = {
 
 const undef = <T>(value: T | null): T | undefined => value ?? undefined;
 
+const DUPLICATE_ID_MESSAGE = 'An application already exists for this ID number.';
+
+export const PROOF_REQUIRED = 'Upload a payslip or bank statement.';
+
+export type ProofUpload = {
+	data: Buffer;
+	mime: string;
+	filename: string;
+	/** Client-generated JPEG chip. Ignored if missing, too large, or the proof is not an image. */
+	thumb?: Buffer | null;
+};
+
+/** Another submitted application already owns this ID — drafts and this row are excluded. */
+function submittedIdTaken(idNumber: string, exceptApplicationId: string): boolean {
+	return Boolean(
+		db
+			.select({ id: applications.id })
+			.from(applications)
+			.where(
+				and(
+					eq(applications.idNumber, idNumber),
+					eq(applications.status, 'submitted'),
+					ne(applications.id, exceptApplicationId)
+				)
+			)
+			.get()
+	);
+}
+
 function toDto(row: ApplicationRow): Application {
 	return {
 		selection: selectionFor(row),
 		applicationId: row.id,
+		publicReference: row.publicReference,
 		status: row.status,
 		firstName: undef(row.firstName),
 		lastName: undef(row.lastName),
@@ -87,6 +130,8 @@ function toDto(row: ApplicationRow): Application {
 		identityAcceptedAt: undef(row.identityAcceptedAt),
 		riskGroup: undef(row.riskGroup),
 		monthlyIncomeCents: undef(row.monthlyIncomeCents),
+		proofFilename: undef(row.proofFilename),
+		proofMime: undef(row.proofMime),
 		phoneId: undef(row.phoneId),
 		consentAt: undef(row.consentAt),
 		cashPriceCents: undef(row.cashPriceCents),
@@ -98,14 +143,62 @@ function toDto(row: ApplicationRow): Application {
 	};
 }
 
-export function createApplication(): Application {
+export type CreatedApplication = Application & { sessionToken: string };
+
+const PUBLIC_REF_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+
+/** `YL-` plus 8 Crockford-base32 chars — short enough to read aloud, unique enough not to collide. */
+function mintPublicReference(): string {
+	const bytes = crypto.getRandomValues(new Uint8Array(5));
+	let n = 0n;
+	for (const byte of bytes) n = (n << 8n) | BigInt(byte);
+	let body = '';
+	for (let i = 0; i < 8; i++) {
+		body = PUBLIC_REF_ALPHABET[Number(n & 31n)] + body;
+		n >>= 5n;
+	}
+	return `YL-${body}`;
+}
+
+export function createApplication(): CreatedApplication {
 	const id = crypto.randomUUID();
-	const [row] = db.insert(applications).values({ id, status: 'draft' }).returning().all();
-	return toDto(row);
+	const sessionToken = mintSessionToken();
+	const sessionTokenHash = hashSessionToken(sessionToken);
+
+	for (let attempt = 0; attempt < 8; attempt++) {
+		try {
+			const [row] = db
+				.insert(applications)
+				.values({
+					id,
+					status: 'draft',
+					sessionTokenHash,
+					publicReference: mintPublicReference()
+				})
+				.returning()
+				.all();
+			return { ...toDto(row), sessionToken };
+		} catch (error) {
+			if (!isUniqueViolation(error) || attempt === 7) throw error;
+		}
+	}
+
+	throw new Error('Could not mint a unique public reference.');
 }
 
 export function getApplication(id: string): Application {
 	const row = db.select().from(applications).where(eq(applications.id, id)).get();
+	if (!row) throw messageError(404, 'No application with that reference.');
+	return toDto(row);
+}
+
+/** Confirmation looks up by the public reference, never by the internal id. */
+export function getApplicationByPublicReference(publicReference: string): Application {
+	const row = db
+		.select()
+		.from(applications)
+		.where(eq(applications.publicReference, publicReference))
+		.get();
 	if (!row) throw messageError(404, 'No application with that reference.');
 	return toDto(row);
 }
@@ -149,24 +242,44 @@ export function patchApplication(id: string, body: unknown): Application {
 	}
 
 	const patch = buildPatch(row, parsed.data);
+	return applyPatch(row, patch);
+}
 
+/** Income step with a multipart proof upload — the JSON patch cannot carry file bytes. */
+export function patchIncomeWithProof(
+	id: string,
+	monthlyIncomeCents: number,
+	proof: ProofUpload | 'keep'
+): Application {
+	const row = db.select().from(applications).where(eq(applications.id, id)).get();
+	if (!row) throw messageError(404, 'No application with that reference.');
+	if (row.status === 'submitted') {
+		throw messageError(409, 'This application has already been submitted.');
+	}
+	if (!isStepUnlocked(toDto(row), 'income')) {
+		throw messageError(409, 'This application is not ready for the income step.');
+	}
+
+	const parsed = incomeSchema.safeParse({ monthlyIncomeCents });
+	if (!parsed.success) {
+		throw fieldError(400, { income: 'Enter an amount, for example R 12 500.' });
+	}
+
+	return applyPatch(row, incomePatch(row, monthlyIncomeCents, proof));
+}
+
+function applyPatch(row: ApplicationRow, patch: ColumnPatch): Application {
 	try {
 		const [updated] = db
 			.update(applications)
 			.set({ ...patch, updatedAt: sql`(current_timestamp)` })
-			.where(eq(applications.id, id))
+			.where(eq(applications.id, row.id))
 			.returning()
 			.all();
 		return toDto(updated);
 	} catch (error) {
-		// One submitted application per ID number, enforced by a partial unique index rather than by
-		// a SELECT-then-INSERT that two concurrent submits could both walk through. The database is
-		// the only place that check can be made honestly, so this is where it is caught — turned into
-		// a field error on the input that caused it, not left to become a 500 on the last screen.
 		if (isUniqueViolation(error)) {
-			throw fieldError(409, {
-				idNumber: 'An application already exists for this ID number.'
-			});
+			throw fieldError(409, { idNumber: DUPLICATE_ID_MESSAGE });
 		}
 		throw error;
 	}
@@ -188,7 +301,7 @@ function buildPatch(row: ApplicationRow, body: PatchBody): ColumnPatch {
 		case 'details':
 			return detailsPatch(row, body.data);
 		case 'income':
-			return incomePatch(row, body.data.monthlyIncomeCents);
+			return incomePatch(row, body.data.monthlyIncomeCents, row.proofMime ? 'keep' : null);
 		case 'phone':
 			return phonePatch(row, body.data.phoneId);
 		case 'submit':
@@ -196,8 +309,11 @@ function buildPatch(row: ApplicationRow, body: PatchBody): ColumnPatch {
 	}
 }
 
-function detailsPatch(row: ApplicationRow, data: DetailsInput): ColumnPatch {
+function detailsPatch(row: ApplicationRow, data: DetailsStepInput): ColumnPatch {
 	const names = { firstName: data.firstName, lastName: data.lastName, mobile: data.mobile };
+	// Stamp once: a later edit of name or mobile is not a new acknowledgement. `??` also covers a
+	// draft whose identity was accepted before consent moved onto this step.
+	const consentAt = row.consentAt ?? new Date().toISOString();
 
 	// The identity lock. Once accepted, the ID number and date of birth are the two answers that
 	// cannot move, because the risk group — and therefore every rate the applicant has already been
@@ -213,7 +329,7 @@ function detailsPatch(row: ApplicationRow, data: DetailsInput): ColumnPatch {
 		if (data.idNumber !== row.idNumber) changed.idNumber = message;
 		if (data.dob !== row.dob) changed.dob = message;
 		if (Object.keys(changed).length > 0) throw fieldError(400, changed);
-		return names;
+		return { ...names, consentAt };
 	}
 
 	// Derived here, once, at the moment identity is accepted — and never recomputed on a later
@@ -225,17 +341,28 @@ function detailsPatch(row: ApplicationRow, data: DetailsInput): ColumnPatch {
 		throw fieldError(400, { dob: 'Applicants must be between 18 and 65 years old.' });
 	}
 
+	// Checked here as well as at submit so the applicant sees it under the ID field on step 1, not
+	// silently on the last screen after identity is already locked.
+	if (submittedIdTaken(data.idNumber, row.id)) {
+		throw fieldError(409, { idNumber: DUPLICATE_ID_MESSAGE });
+	}
+
 	return {
 		...names,
 		idNumber: data.idNumber,
 		dob: data.dob,
 		identityAcceptedAt: new Date().toISOString(),
+		consentAt,
 		riskGroup
 	};
 }
 
-function incomePatch(row: ApplicationRow, monthlyIncomeCents: number): ColumnPatch {
-	const patch: ColumnPatch = { monthlyIncomeCents };
+function incomePatch(
+	row: ApplicationRow,
+	monthlyIncomeCents: number,
+	proof: ProofUpload | 'keep' | null
+): ColumnPatch {
+	const patch: ColumnPatch = { monthlyIncomeCents, ...proofColumns(row, proof) };
 
 	// Income is the only answer in this flow that a later step depends on, so it is the only one
 	// whose edit can invalidate work already done. Left alone, a phone chosen under a higher income
@@ -251,6 +378,33 @@ function incomePatch(row: ApplicationRow, monthlyIncomeCents: number): ColumnPat
 	}
 
 	return patch;
+}
+
+function proofColumns(
+	row: ApplicationRow,
+	proof: ProofUpload | 'keep' | null
+): Pick<ColumnPatch, 'proofMime' | 'proofFilename'> {
+	if (proof === 'keep') {
+		if (!row.proofMime) throw fieldError(400, { proof: PROOF_REQUIRED });
+		return {};
+	}
+
+	if (proof) {
+		const mime = proof.mime || proofMimeFromFilename(proof.filename);
+		if (!mime || !ACCEPTED_PROOF_MIME_SET.has(mime)) {
+			throw fieldError(400, { proof: PROOF_TYPE_ERROR });
+		}
+		if (proof.data.length === 0 || proof.data.length > MAX_PROOF_BYTES) {
+			throw fieldError(400, {
+				proof: 'That file is too large. Use a photo under 5 MB or a smaller PDF.'
+			});
+		}
+		saveProof(row.id, proof.data, mime.startsWith('image/') ? proof.thumb : null);
+		return { proofMime: mime, proofFilename: proof.filename };
+	}
+
+	if (!row.proofMime) throw fieldError(400, { proof: PROOF_REQUIRED });
+	return {};
 }
 
 function phonePatch(row: ApplicationRow, phoneId: number): ColumnPatch {
@@ -271,13 +425,13 @@ function phonePatch(row: ApplicationRow, phoneId: number): ColumnPatch {
 }
 
 function submitPatch(row: ApplicationRow): ColumnPatch {
-	if (row.phoneId == null || !row.riskGroup) {
+	if (row.phoneId == null || !row.riskGroup || !row.consentAt) {
 		throw messageError(409, 'This application is not ready to submit.');
 	}
 
-	// Recomputed from the phone and pricing rows rather than trusted from anything the client sent
-	// — the client has never seen a rate and never will. These are the numbers that get stored, and
-	// storing them is what stops a later catalogue edit from silently restating the offer.
+	// Recomputed from the phone and the band's rates rather than trusted from anything the client
+	// sent — the client has never seen a rate and never will. These are the numbers that get stored,
+	// and storing them is what stops a later catalogue edit from silently restating the offer.
 	const priced = priceOne(row.phoneId, row.riskGroup);
 	if (!isAffordable(row.monthlyIncomeCents ?? 0, priced.dailyCents)) {
 		throw messageError(
@@ -288,7 +442,6 @@ function submitPatch(row: ApplicationRow): ColumnPatch {
 
 	return {
 		status: 'submitted',
-		consentAt: new Date().toISOString(),
 		cashPriceCents: priced.cashPriceCents,
 		depositBps: priced.depositBps,
 		interestBps: priced.interestBps,
@@ -305,7 +458,7 @@ function submitPatch(row: ApplicationRow): ColumnPatch {
  *
  * A submitted application is rebuilt from its own stored columns and never re-priced: those numbers
  * are a promise made at a moment in time, and re-deriving them would silently restate the offer
- * every time a pricing row moved.
+ * every time a rates row moved.
  */
 function selectionFor(row: ApplicationRow): QuotedPhone | undefined {
 	if (row.phoneId == null) return undefined;
@@ -331,25 +484,29 @@ function selectionFor(row: ApplicationRow): QuotedPhone | undefined {
 }
 
 /**
- * One phone, priced at one band, straight from the two tables. The rates never leave this file's
- * side of the wire — `listPhones` and every patch above go through here.
+ * One phone, priced at one band: cash price from the catalogue, rates from the risk group.
+ * The rates never leave this file's side of the wire — `listPhones` and every patch above go
+ * through here.
  */
 export function priceOne(phoneId: number, riskGroup: RiskGroup) {
-	const found = db
-		.select({
-			cashPriceCents: phones.cashPriceCents,
-			depositBps: phonePricing.depositBps,
-			interestBps: phonePricing.interestBps
-		})
+	const phone = db
+		.select({ cashPriceCents: phones.cashPriceCents })
 		.from(phones)
-		.innerJoin(
-			phonePricing,
-			and(eq(phonePricing.phoneId, phones.phoneId), eq(phonePricing.riskGroup, riskGroup))
-		)
 		.where(eq(phones.phoneId, phoneId))
 		.get();
 
-	if (!found) throw fieldError(400, { phoneId: 'Choose a phone from the list.' });
+	if (!phone) throw fieldError(400, { phoneId: 'Choose a phone from the list.' });
 
-	return { ...found, ...quote(found.cashPriceCents, found) };
+	const rates = db
+		.select({
+			depositBps: riskGroupRates.depositBps,
+			interestBps: riskGroupRates.interestBps
+		})
+		.from(riskGroupRates)
+		.where(eq(riskGroupRates.riskGroup, riskGroup))
+		.get();
+
+	if (!rates) throw new Error(`No rates for risk group ${riskGroup}`);
+
+	return { ...phone, ...rates, ...quote(phone.cashPriceCents, rates) };
 }
