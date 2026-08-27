@@ -1,8 +1,57 @@
 # Yellow loan application
 
-Take-home: a South African phone-finance application. Capture ID and date of birth, income, and a
-phone; quotes are daily instalments over 360 days. Eligibility (SA ID checksum, age 18–65, unique
-ID, affordability) and all quote arithmetic run on the server.
+A South African phone-finance wizard. The applicant enters ID and date of birth, income, and a
+phone; the quote is a daily instalment over 360 days. Eligibility (SA ID checksum, age 18–65,
+unique ID, affordability) and all quote arithmetic run on the server.
+
+Live: <https://app.yellow.travisdefty.co.za/>
+
+Requires Node 22+ and pnpm.
+
+## Run locally
+
+```sh
+pnpm install
+pnpm dev        # http://localhost:5173
+pnpm check      # svelte-check
+pnpm build      # adapter-node → apps/web/build
+pnpm db:studio  # browse SQLite in the browser
+```
+
+The database is created, migrated and seeded on first import — no setup step. `DB_PATH` defaults to
+`./data/yellow.db`; proofs default to `./data/proofs`.
+
+```sh
+cd apps/web && pnpm exec drizzle-kit generate   # after editing db/schema.ts
+```
+
+To run the production build the way Fly does, `ORIGIN` must match the address you browse to, or
+every form action answers 403:
+
+```sh
+cd apps/web && ORIGIN=http://localhost:3000 node server.js
+```
+
+## Try it
+
+Copy these through the wizard. Each ID passes the checksum and agrees with the date of birth. Tick
+the consent box on details. Proof of income is required but not read — upload
+[`docs/example-payslip.jpg`](docs/example-payslip.jpg). A second submit with the same ID fails until
+that row is deleted (see [Inspect / reset the database](#inspect--reset-the-database)).
+
+| | Sipho Nkosi | Thandi Mokoena | Johan van der Berg | Ayanda Dlamini |
+|---|---|---|---|---|
+| First name | Sipho | Thandi | Johan | Ayanda |
+| Last name | Nkosi | Mokoena | van der Berg | Dlamini |
+| Mobile | `0821234567` | `0734567890` | `0612345678` | `0845678901` |
+| ID number | `0003155808086` | `8402200912087` | `6401106200086` | `9806272341083` |
+| Date of birth | 15 / 03 / 2000 | 20 / 02 / 1984 | 10 / 01 / 1964 | 27 / 06 / 1998 |
+| Monthly income | `18000` | `8500` | `25000` | `12000` |
+| Risk band | A (18–30) | B (31–50) | C (51–65) | A (18–30) |
+
+`18000` is enough for every handset in every band. `8500` hides the flagships and leaves the cheaper phones.
+
+## What's in the repo
 
 pnpm workspace:
 
@@ -11,39 +60,7 @@ apps/web          SvelteKit wizard + the API it talks to
 packages/domain   SA ID, age and risk, money, pricing, eligibility, shared Zod schemas
 ```
 
-Requires Node 22+.
-
-## Two deliberate divergences from the specification
-
-Both were taken under the five-hour budget, and both are real trade-offs rather than oversights.
-
-**The API is SvelteKit `+server.ts` routes, not Fastify.** The specification names `apps/api` on
-Fastify. Standing up, deploying and debugging a second service was the most expensive remaining
-item and the least visible in the result, so the workplan's own fallback applies — *"if Fastify is
-late, demo on the SvelteKit routes rather than shipping an empty API app."*
-
-The cost is honest: the strict-schema boundary is enforced in the same process that calls it, so it
-proves less than two processes would. What is mitigated is the porting cost. Every endpoint's logic
-lives in `apps/web/src/lib/server/api/` as plain functions over plain input that import nothing from
-`@sveltejs/kit` — the route files are six-line adapters, and `$lib/server/respond.ts` is the only
-piece that knows what framework it is running in. Pointing these at Fastify means writing the
-equivalent of that one file.
-
-**Storage is SQLite on a Fly volume, not Postgres.** One app, one machine, one file at
-`/data/yellow.db`; no second deploy target, no connection string, no cross-region round trip from
-`jnb`. The schema is written to be portable — integer cents, integer basis points, text dates, no
-SQLite-specific types — so moving to Postgres is a driver swap and a regenerated migration. The
-cost is that the app cannot scale past one machine, because a volume cannot be shared.
-
-**Also known and not fixed:** ID numbers and dates of birth are stored in the clear, which is a real
-POPIA gap next to a consent checkbox whose wording is a placeholder. The checkbox sits on the
-details step, because that is when the row first receives personal information. Income-proof
-upload, mock payment and collection points are out, in that order. Application reads and writes
-require the browser-session cookie (`yl_app`) that holds the application id plus a secret token;
-knowing the id alone is not enough. The applicant-facing reference is a short public code
-(`YL-…`), not the internal uuid.
-
-## How it is put together
+## How it works
 
 **One route per step**, so refresh and the back button work with nothing to restore. Every screen
 works with JavaScript disabled: forms are real form actions, and the whole flow was verified by
@@ -78,6 +95,10 @@ own ID forever. The constraint violation is caught and returned as a field error
 amounts onto the application. A quote is a promise made at a moment in time; re-deriving it on read
 would silently restate the offer every time a pricing row moved.
 
+Application reads and writes require the `yl_app` session cookie (application id plus a secret
+token). Knowing the id alone is not enough. Confirmation URLs use the public reference (`YL-…`),
+not the internal uuid.
+
 ### API
 
 | | |
@@ -88,54 +109,25 @@ would silently restate the offer every time a pricing row moved.
 | `GET /api/phones?page=` | catalogue, quoted at the cookie's application's band, filtered to what it can afford, paginated |
 
 The wizard calls these through `event.fetch`, which SvelteKit resolves straight to the handler with
-no network round trip — a real boundary at no cost. `GET /phones` takes the application from the
-session cookie rather than a risk group, because a risk group in a query string is a rate the
-client got to choose. Confirmation URLs use the public reference (`YL-…`), not the internal id.
+no network round trip. `GET /phones` takes the application from the session cookie rather than a
+risk group, because a risk group in a query string is a rate the client got to choose.
 
-## Local
+## Notes vs the brief
 
-```sh
-pnpm install
-pnpm dev        # http://localhost:5173
-pnpm check      # svelte-check
-pnpm build      # adapter-node → apps/web/build
-pnpm db:studio  # browse SQLite in the browser
-```
+The original brief is in [`docs/1-specifications.md`](docs/1-specifications.md). Two stack choices
+differ, and a few extras were left out:
 
-The database is created, migrated and seeded on first import — no setup step. `DB_PATH` defaults to
-`./data/yellow.db`; proofs default to `./data/proofs`.
-
-```sh
-cd apps/web && pnpm exec drizzle-kit generate   # after editing db/schema.ts
-```
-
-To run the production build the way Fly does, `ORIGIN` must match the address you browse to, or
-every form action answers 403:
-
-```sh
-cd apps/web && ORIGIN=http://localhost:3000 node server.js
-```
-
-## Example applicants
-
-Copy these through the wizard. Each ID passes the checksum and agrees with the date of birth. Tick the consent box on details. Proof of income is required but not read — upload [`docs/example-payslip.jpg`](docs/example-payslip.jpg). A second submit with the same ID fails until that row is deleted (see below).
-
-| | Sipho Nkosi | Thandi Mokoena | Johan van der Berg |
-|---|---|---|---|
-| First name | Sipho | Thandi | Johan |
-| Last name | Nkosi | Mokoena | van der Berg |
-| Mobile | `0821234567` | `0734567890` | `0612345678` |
-| ID number | `0003155808086` | `8402200912087` | `6401106200086` |
-| Date of birth | 15 / 03 / 2000 | 20 / 02 / 1984 | 10 / 01 / 1964 |
-| Monthly income | `18000` | `8500` | `25000` |
-| Risk band | A (18–30) | B (31–50) | C (51–65) |
-
-`18000` is enough for every handset in every band. `8500` hides the flagships and leaves the cheaper phones.
+- The API is SvelteKit `+server.ts` routes, not a separate Fastify app. Endpoint logic lives in
+  `apps/web/src/lib/server/api/` as plain functions that import nothing from `@sveltejs/kit`.
+- Storage is SQLite on a Fly volume, not Postgres. The schema uses integer cents, integer basis
+  points and text dates — no SQLite-specific types.
+- Known gaps: ID numbers and dates of birth are stored in the clear; income proof is uploaded but
+  not read; there is no mock payment.
 
 ## Hosting
 
 [Fly.io](https://fly.io) as `yellow-travisdefty`, a single Machine in Johannesburg (`jnb`), with a
-volume mounted at `/data`. Create it once before the first deploy:
+volume mounted at `/data`. Create the volume once before the first deploy:
 
 ```sh
 fly volumes create yellow_data --region jnb --size 1
@@ -147,9 +139,13 @@ fly deploy --ha=false
 
 ## Inspect / reset the database
 
-SQLite is a file, not a server. There is no admin API — ID numbers live in the clear, and a list or delete route would be a public leak. Browse and edit the file with a client.
+SQLite is a file, not a server. There is no admin API — ID numbers live in the clear, and a list
+or delete route would be a public leak. Browse and edit the file with a client.
 
-Local: `apps/web/data/yellow.db`. Remote: `/data/yellow.db` on the Fly volume. Delete **rows in `applications`**, not the whole file, unless you want a full wipe. Submitted ID uniqueness (`applications_id_number_submitted`) is why a second test with the same ID fails until that row is gone. Proof files live beside the DB (`apps/web/data/proofs` locally, `/data/proofs` on Fly); deleting rows does not remove them.
+Local: `apps/web/data/yellow.db`. Remote: `/data/yellow.db` on the Fly volume. Delete **rows in
+`applications`**, not the whole file, unless you want a full wipe. A second test with the same ID
+fails until that submitted row is gone. Proof files live beside the DB (`apps/web/data/proofs`
+locally, `/data/proofs` on Fly); deleting rows does not remove them.
 
 **View locally** — Drizzle Studio, fine while `pnpm dev` is running:
 

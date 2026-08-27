@@ -3,7 +3,14 @@
  * import from here rather than reaching into individual modules.
  */
 
-export { LOAN_TERM_DAYS, applyBps, parseRandsToCents } from './money.ts';
+export {
+	LOAN_TERM_DAYS,
+	MIN_MONTHLY_INCOME_CENTS,
+	MAX_MONTHLY_INCOME_CENTS,
+	applyBps,
+	parseRandsToCents,
+	formatCentsAsRandsInput
+} from './money.ts';
 export type { Cents, Bps } from './money.ts';
 
 export { isValidSaId, idBirthDigits } from './sa-id.ts';
@@ -17,6 +24,7 @@ export type { PricingRow, Quote } from './pricing.ts';
 export { MONTHLY_DAYS, INCOME_MULTIPLE, minimumIncomeFor, isAffordable } from './eligibility.ts';
 
 export {
+	composeDob,
 	detailsSchema,
 	detailsStepSchema,
 	incomeSchema,

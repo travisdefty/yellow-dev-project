@@ -1,4 +1,5 @@
 import { fail, redirect } from '@sveltejs/kit';
+import { composeDob } from '@yellow/domain';
 import { nextStepAfter, writeDraft } from '$lib/server/draft';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -21,10 +22,11 @@ export const actions = {
 		// (three plain <input>s beat one that needs script to compose a date as you type). The server
 		// is the one place that has to glue them back into 'YYYY-MM-DD', padded to two digits, because
 		// that composition has to happen whether or not the client ran any validation of its own.
-		const dobDay = String(form.get('dobDay') ?? '').padStart(2, '0');
-		const dobMonth = String(form.get('dobMonth') ?? '').padStart(2, '0');
-		const dobYear = String(form.get('dobYear') ?? '');
-		const composedDob = `${dobYear}-${dobMonth}-${dobDay}`;
+		const composedDob = composeDob(
+			String(form.get('dobYear') ?? ''),
+			String(form.get('dobMonth') ?? ''),
+			String(form.get('dobDay') ?? '')
+		);
 
 		// Identity lock, the form's half: once identity has been accepted, the inputs are readonly and
 		// this sends the stored values back rather than whatever arrived in the body. The API refuses

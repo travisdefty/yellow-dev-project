@@ -11,7 +11,8 @@
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import { prepareFileUpload, isAcceptedProof, PROOF_ACCEPT, PROOF_TYPE_ERROR } from '$lib/upload';
 	import { toast } from 'svelte-sonner';
-	import { incomeSchema, parseRandsToCents } from '@yellow/domain';
+	import { formatCentsAsRandsInput, incomeSchema, parseRandsToCents } from '@yellow/domain';
+	import { isAllowedIncomeInput, onIncomeBeforeInput } from '$lib/digits';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -19,13 +20,13 @@
 	const INCOME_ERROR = 'Enter an amount, for example R 12 500.';
 	const PROOF_REQUIRED = 'Upload a payslip or bank statement.';
 
-	let income = $state(
-		untrack(() =>
-			data.draft.monthlyIncomeCents !== undefined
-				? String(data.draft.monthlyIncomeCents / 100)
-				: ''
-		)
+	const seedIncome = untrack(() =>
+		data.draft.monthlyIncomeCents !== undefined
+			? formatCentsAsRandsInput(data.draft.monthlyIncomeCents)
+			: ''
 	);
+	let income = $state(seedIncome);
+	let lastAllowedIncome = seedIncome;
 	const savedProofName = untrack(() => data.draft.proofFilename ?? '');
 	const savedIsImage = untrack(() => Boolean(data.draft.proofIsImage));
 
@@ -44,7 +45,17 @@
 	const errors = $derived<Record<string, string>>(clientErrors ?? form?.errors ?? {});
 
 	const hasProof = $derived(Boolean(proofFile || savedProofName));
-	const complete = $derived(Boolean(income && hasProof));
+
+	function onIncomeFieldInput(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		if (!isAllowedIncomeInput(input.value)) {
+			input.value = lastAllowedIncome;
+			income = lastAllowedIncome;
+			return;
+		}
+		lastAllowedIncome = input.value;
+		income = input.value;
+	}
 
 	onDestroy(() => {
 		if (previewUrl) URL.revokeObjectURL(previewUrl);
@@ -190,6 +201,8 @@
 				id="income"
 				name="income"
 				bind:value={income}
+				onbeforeinput={onIncomeBeforeInput}
+				oninput={onIncomeFieldInput}
 				inputmode="decimal"
 				placeholder="12 500"
 				class="pl-7"
@@ -198,7 +211,7 @@
 			/>
 		</div>
 		<p id="income-hint" class="mt-1.5 text-sm text-muted-foreground">
-			We want to provide you with options that work for you.
+			Whole rands or cents — up to two decimal places.
 		</p>
 		<FieldError id="income-error" message={errors.income} />
 	</div>
@@ -307,7 +320,7 @@
 
 	<div class="flex gap-3">
 		<Button size="pill" variant="outline" href="/apply/details" class="flex-1">Back</Button>
-		<Button size="pill" type="submit" disabled={!complete || preparing || submitting} class="flex-1">
+		<Button size="pill" type="submit" disabled={preparing || submitting} class="flex-1">
 			{preparing ? 'Preparing…' : submitting ? 'Saving…' : 'Continue'}
 		</Button>
 	</div>

@@ -13,6 +13,25 @@ export function applyBps(cents: Cents, bps: Bps): Cents {
 	return Math.round((cents * bps) / 10_000);
 }
 
+/** Smallest monthly income the application will accept: R 1. */
+export const MIN_MONTHLY_INCOME_CENTS = 100;
+
+/** Largest monthly income the application will accept: R 99 999 999.99. */
+export const MAX_MONTHLY_INCOME_CENTS = 9_999_999_999;
+
+/**
+ * Integer-cents amount as a rands string for an input, without a float divide.
+ * Whole rands stay whole; 1999 cents is "19.99", never "19.989999999".
+ */
+export function formatCentsAsRandsInput(cents: Cents): string {
+	const sign = cents < 0 ? '-' : '';
+	const absolute = Math.abs(cents);
+	const rands = Math.trunc(absolute / 100);
+	const remainder = absolute % 100;
+	if (remainder === 0) return `${sign}${rands}`;
+	return `${sign}${rands}.${String(remainder).padStart(2, '0')}`;
+}
+
 /**
  * Accepts what a South African actually types: "R 12 500", "12500", "12 500,50", "12,500.50",
  * "R12500.50". Currency symbol and whitespace (including non-breaking space) are stripped first;
@@ -54,6 +73,8 @@ export function parseRandsToCents(input: string): Cents | null {
 	if (!/^\d+$/.test(integerPart)) return null;
 	if (fractionPart.length > 2) return null;
 
-	const cents = fractionPart.padEnd(2, '0');
-	return Number(integerPart) * 100 + Number(cents || '0');
+	const fractionCents = fractionPart.padEnd(2, '0');
+	const cents = Number(integerPart) * 100 + Number(fractionCents || '0');
+	if (!Number.isSafeInteger(cents) || cents < 0) return null;
+	return cents;
 }

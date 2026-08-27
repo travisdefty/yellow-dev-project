@@ -5,8 +5,9 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import FieldError from '$lib/components/FieldError.svelte';
-	import { detailsStepSchema } from '@yellow/domain';
+	import { composeDob, detailsStepSchema } from '@yellow/domain';
 	import { validatedSubmit } from '$lib/forms';
+	import { onDigitsInput } from '$lib/digits';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -59,16 +60,9 @@
 	// the server actually does with them.
 	const identityLocked = $derived(Boolean(data.draft.identityAcceptedAt));
 
-	// Continue is enabled on completeness, not validity: a button greyed out while the applicant
-	// believes they've finished explains nothing, and it's pressing Continue on complete-but-wrong
-	// input that actually reveals the error (here, via a real server round trip if JS is off).
-	// Validity is checked at submit time by `validatedSubmit`/the action, not here.
-	const complete = $derived(
-		Boolean(firstName && lastName && mobile && idNumber && dobDay && dobMonth && dobYear)
-	);
-
-	// The client composes 'dob' the same way the server does, so the same schema can run on both
-	// sides and produce the same errors.
+	// Validity is checked at submit time by `validatedSubmit`/the action, not by greying out
+	// Continue. A completeness-disabled button is `disabled` in the SSR HTML and stays that way
+	// with JavaScript off, so the form could not be posted from a browser without script.
 	const submit = validatedSubmit(
 		detailsStepSchema,
 		() => ({
@@ -76,7 +70,7 @@
 			lastName,
 			mobile,
 			idNumber,
-			dob: `${dobYear}-${dobMonth.padStart(2, '0')}-${dobDay.padStart(2, '0')}`,
+			dob: composeDob(dobYear, dobMonth, dobDay),
 			consent
 		}),
 		(e) => (clientErrors = e),
@@ -121,10 +115,11 @@
 			name="mobile"
 			type="tel"
 			bind:value={mobile}
-			inputmode="tel"
+			oninput={onDigitsInput((value) => (mobile = value), 10)}
+			inputmode="numeric"
 			autocomplete="tel-national"
 			maxlength={10}
-			placeholder="082 123 4567"
+			placeholder="0821234567"
 			aria-describedby="mobile-hint mobile-error"
 			aria-invalid={Boolean(errors.mobile) || undefined}
 		/>
@@ -140,7 +135,9 @@
 			id="idNumber"
 			name="idNumber"
 			bind:value={idNumber}
+			oninput={identityLocked ? undefined : onDigitsInput((value) => (idNumber = value), 13)}
 			inputmode="numeric"
+			autocomplete="off"
 			maxlength={13}
 			placeholder="13 digits"
 			aria-describedby="idNumber-error"
@@ -165,9 +162,11 @@
 				aria-label="Day"
 				name="dobDay"
 				bind:value={dobDay}
+				oninput={identityLocked ? undefined : onDigitsInput((value) => (dobDay = value), 2)}
 				inputmode="numeric"
 				maxlength={2}
 				placeholder="DD"
+				aria-describedby="dob-error"
 				aria-invalid={Boolean(errors.dob) || undefined}
 				readonly={identityLocked}
 				aria-readonly={identityLocked || undefined}
@@ -177,9 +176,11 @@
 				aria-label="Month"
 				name="dobMonth"
 				bind:value={dobMonth}
+				oninput={identityLocked ? undefined : onDigitsInput((value) => (dobMonth = value), 2)}
 				inputmode="numeric"
 				maxlength={2}
 				placeholder="MM"
+				aria-describedby="dob-error"
 				aria-invalid={Boolean(errors.dob) || undefined}
 				readonly={identityLocked}
 				aria-readonly={identityLocked || undefined}
@@ -189,9 +190,11 @@
 				aria-label="Year"
 				name="dobYear"
 				bind:value={dobYear}
+				oninput={identityLocked ? undefined : onDigitsInput((value) => (dobYear = value), 4)}
 				inputmode="numeric"
 				maxlength={4}
 				placeholder="YYYY"
+				aria-describedby="dob-error"
 				aria-invalid={Boolean(errors.dob) || undefined}
 				readonly={identityLocked}
 				aria-readonly={identityLocked || undefined}
@@ -236,7 +239,7 @@
 		<FieldError id="consent-error" message={errors.consent} />
 	</div>
 
-	<Button size="pill" type="submit" disabled={!complete || submitting} class="mt-2">
+	<Button size="pill" type="submit" disabled={submitting} class="mt-2">
 		{submitting ? 'Saving…' : 'Continue'}
 	</Button>
 </form>
